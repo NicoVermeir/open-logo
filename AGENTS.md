@@ -11,7 +11,7 @@ Logo: programming + turtle graphics + geometry + AI coaching + discovery learnin
 language contract lives in [`spec/`](spec/README.md)** and is owned by the maintainer — treat it as
 the source of truth and never edit it without maintainer review.
 
-The implementation is a **TypeScript 7 monorepo** (`openlogo/`) with six packages:
+The implementation is a **TypeScript 7 monorepo** (`openlogo/`) with eight packages:
 
 | Package | Responsibility |
 |---|---|
@@ -19,8 +19,10 @@ The implementation is a **TypeScript 7 monorepo** (`openlogo/`) with six package
 | `@openlogo/parser` | Lexer, reader, EBNF grammar, AST, reserved words, syntax highlighting + syntax/semantic checker |
 | `@openlogo/runtime` | Evaluator, scoping, procedures, control forms, comprehensions, places, safety |
 | `@openlogo/turtle` | Turtle/sprite state, pen/heading/shape, rendering (Canvas/SVG/PNG), animation, a11y |
+| `@openlogo/turtlebot` | Physical-turtle trace translation, MQTT publishing, and mBot2 CyberPi firmware |
 | `@openlogo/studio` | Browser web app (learner IDE): editor/REPL, Canvas turtle view, run/stop/step, diagnostics UI, tooling, lessons |
 | `@openlogo/edu` | Learner levels, `explain`/`why`/`hint`/`debug`, geometry stdlib, AI tutor, curriculum |
+| `@openlogo/board-reader` | Headless magnetic-board recognition contract, deterministic source generation, and parser validation |
 
 Build order follows the spec's profile DAG: **Core Language → Turtle & Rendering** (minimal
 conformance) → optional profiles (Data, Geometry, Heritage, Sprites, Interaction & Events, Sound,

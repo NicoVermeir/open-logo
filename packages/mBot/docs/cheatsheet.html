@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Robot Cheat Sheet</title>
+<style>
+  :root {
+    --paper: #f6f8fb;
+    --card: #ffffff;
+    --ink: #1b2440;
+    --ink-soft: #566089;
+    --line: #e3e8f2;
+    --code-bg: #ffffff;
+    --code-ink: #232b47;
+    --code-c: #5c6788;   /* comment */
+    --code-k: #c2186f;   /* keyword */
+    --code-f: #9a5b00;   /* function */
+    --code-n: #0a6d60;   /* number/string */
+    --teal: #0fb5a5;
+    --grape: #7c5cff;
+    --coral: #ff6b5c;
+    --sunny: #f0a500;
+    --sky: #2f9bff;
+    --shadow: 18px 18px 0 rgba(27,36,64,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #10152a;
+      --card: #191f39;
+      --ink: #eef1fb;
+      --ink-soft: #9aa6cf;
+      --line: #2a3357;
+      --shadow: 18px 18px 0 rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="light"] {
+    --paper: #f6f8fb; --card: #fff; --ink: #1b2440; --ink-soft: #566089;
+    --line: #e3e8f2; --shadow: 18px 18px 0 rgba(27,36,64,.06);
+  }
+  :root[data-theme="dark"] {
+    --paper: #10152a; --card: #191f39; --ink: #eef1fb; --ink-soft: #9aa6cf;
+    --line: #2a3357; --shadow: 18px 18px 0 rgba(0,0,0,.25);
+  }
+
+  * { box-sizing: border-box; }
+  body, .sheet {
+    font-family: "SF Pro Rounded", ui-rounded, "Hiragino Maru Gothic ProN",
+                 "Segoe UI", system-ui, sans-serif;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; }
+
+  .sheet {
+    background: var(--paper);
+    color: var(--ink);
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: clamp(16px, 3vw, 40px);
+    line-height: 1.45;
+  }
+
+  /* ---------- header ---------- */
+  .hero {
+    display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+    background: linear-gradient(120deg, var(--teal), var(--sky));
+    color: #fff;
+    border-radius: 26px;
+    padding: clamp(20px, 3vw, 34px);
+    box-shadow: var(--shadow);
+    position: relative; overflow: hidden;
+  }
+  .robot { font-size: clamp(56px, 9vw, 88px); line-height: 1; filter: drop-shadow(0 6px 0 rgba(0,0,0,.15)); }
+  .hero h1 {
+    margin: 0; font-size: clamp(30px, 5.5vw, 52px); font-weight: 800;
+    letter-spacing: -.5px; text-wrap: balance;
+  }
+  .hero p { margin: 6px 0 0; font-size: clamp(15px, 2vw, 19px); opacity: .95; font-weight: 600; }
+  .leds { display: flex; gap: 9px; margin-top: 14px; }
+  .leds span {
+    width: 16px; height: 16px; border-radius: 50%;
+    box-shadow: 0 0 0 3px rgba(255,255,255,.35), 0 0 14px currentColor;
+    display: inline-block;
+  }
+
+  /* ---------- start strip ---------- */
+  .start {
+    margin-top: 22px;
+    background: var(--card);
+    border: 3px dashed var(--teal);
+    border-radius: 22px;
+    padding: clamp(16px, 2.4vw, 24px);
+    box-shadow: var(--shadow);
+  }
+  .start .tag { color: var(--teal); }
+  .tag {
+    display: inline-block; font-weight: 800; font-size: 13px;
+    text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 10px;
+  }
+  pre.code {
+    margin: 0; background: var(--code-bg); color: var(--code-ink);
+    border: 1.5px solid var(--line);
+    border-radius: 16px; padding: 16px 18px; overflow-x: auto;
+    font-size: 15px; line-height: 1.7;
+  }
+  .code .c { color: var(--code-c); }      /* comment */
+  .code .k { color: var(--code-k); }      /* keyword */
+  .code .f { color: var(--code-f); }      /* function */
+  .code .n { color: var(--code-n); }      /* number/string */
+
+  /* ---------- cards ---------- */
+  .grid {
+    margin-top: 22px; display: grid; gap: 18px;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+  .card {
+    background: var(--card); border-radius: 22px; padding: 20px;
+    box-shadow: var(--shadow); border-top: 8px solid var(--accent);
+  }
+  .card h2 {
+    margin: 0 0 4px; font-size: 22px; font-weight: 800;
+    display: flex; align-items: center; gap: 10px; color: var(--accent);
+  }
+  .card h2 .emoji { font-size: 26px; }
+  .card .sub { margin: 0 0 14px; color: var(--ink-soft); font-weight: 600; font-size: 14px; }
+  .move  { --accent: var(--teal); }
+  .lights{ --accent: var(--grape); }
+  .sound { --accent: var(--coral); }
+  .screen{ --accent: var(--sunny); }
+  .sense { --accent: var(--sky); }
+
+  .row { display: flex; gap: 12px; align-items: baseline; padding: 7px 0; border-top: 1px solid var(--line); }
+  .row:first-of-type { border-top: none; }
+  .row code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--ink); font-weight: 700; font-size: 14px;
+    padding: 3px 8px; border-radius: 8px; white-space: nowrap;
+  }
+  .row .desc { color: var(--ink-soft); font-size: 14px; font-weight: 600; }
+
+  /* ---------- color mixer ---------- */
+  .lower { margin-top: 22px; display: grid; gap: 18px; grid-template-columns: 1.1fr 1fr; }
+  @media (max-width: 720px) { .lower { grid-template-columns: 1fr; } }
+  .panel { background: var(--card); border-radius: 22px; padding: 20px; box-shadow: var(--shadow); }
+  .panel h2 { margin: 0 0 12px; font-size: 20px; font-weight: 800; }
+
+  .mix { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .swatch { display: flex; align-items: center; gap: 12px; }
+  .chip { width: 30px; height: 30px; border-radius: 9px; flex: 0 0 auto; box-shadow: inset 0 0 0 2px rgba(0,0,0,.08); }
+  .swatch code {
+    font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: 14px;
+    background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink);
+    padding: 3px 8px; border-radius: 8px;
+  }
+  .swatch .name { color: var(--ink-soft); font-weight: 700; font-size: 14px; }
+
+  .tips { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; }
+  .tips li { display: flex; gap: 11px; align-items: flex-start; font-weight: 600; font-size: 14.5px; }
+  .tips .b { font-size: 20px; line-height: 1.1; }
+  .tips code { font-family: ui-monospace, Menlo, monospace; background: color-mix(in srgb, var(--sky) 15%, transparent); padding: 1px 6px; border-radius: 6px; font-weight: 700; }
+
+  /* ---------- big program ---------- */
+  .program { margin-top: 22px; }
+  .program .tag { color: var(--coral); }
+  .program pre.code { font-size: 15.5px; }
+
+  .foot { margin-top: 20px; text-align: center; color: var(--ink-soft); font-weight: 700; font-size: 13px; }
+
+  @media print {
+    /* Force a light, ink-friendly print regardless of the viewer's theme */
+    :root, :root[data-theme="dark"] {
+      --paper: #fff; --card: #fff; --ink: #1b2440; --ink-soft: #4b5578;
+      --line: #d0d8e8;
+    }
+    /* Print the colors — browsers drop backgrounds by default */
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+    @page { size: A4 portrait; margin: 6mm; }
+    html, body { background: #fff; }
+    .sheet { padding: 0; max-width: none; font-size: 10px; }
+
+    /* Flat, ink-light: drop the big drop-shadows, keep the color accents */
+    .hero, .start, .card, .panel { box-shadow: none !important; }
+    .card, .panel { border: 1.2px solid var(--line); }
+
+    /* --- Slim header bar --- */
+    .hero { border-radius: 12px; padding: 7px 14px; gap: 12px; }
+    .robot { font-size: 32px; filter: none; }
+    .hero h1 { font-size: 20px; }
+    .hero p { font-size: 10.5px; margin-top: 2px; }
+    .leds { margin-top: 5px; gap: 6px; }
+    .leds span { width: 10px; height: 10px; box-shadow: 0 0 0 2px rgba(255,255,255,.35); }
+
+    /* --- Compact "start" strip --- */
+    .start { border: 1.5px dashed var(--teal); border-radius: 11px; padding: 6px 11px; margin-top: 7px; }
+    .tag { font-size: 9.5px; margin-bottom: 4px; letter-spacing: 1px; }
+
+    /* --- Cards: 3-column packing so all five fit in one band --- */
+    .grid { display: block; column-count: 3; column-gap: 7px; margin-top: 7px; }
+    .lower { display: block; column-count: 3; column-gap: 7px; margin-top: 7px; }
+    .card, .panel { margin: 0 0 7px; padding: 8px 10px; border-radius: 10px; border-top-width: 5px; }
+    .card h2, .panel h2 { font-size: 14px; margin-bottom: 1px; }
+    .card h2 .emoji { font-size: 15px; }
+    .card .sub, .panel .sub { font-size: 9px; margin-bottom: 4px; }
+    .row { padding: 2px 0; gap: 6px; }
+    .row code { font-size: 9px; padding: 1.5px 5px; }
+    .row .desc { font-size: 9px; }
+    .swatch { padding: 1.5px 0; gap: 7px; }
+    .swatch .chip { width: 16px; height: 16px; border-radius: 5px; }
+    .swatch code, .swatch .name { font-size: 9px; }
+    .tips { gap: 4px; }
+    .tips li { font-size: 9px; gap: 7px; }
+    .tips .b { font-size: 13px; }
+
+    /* --- Code blocks: small but readable --- */
+    pre.code { font-size: 8.5px; padding: 7px 9px; line-height: 1.45; border-radius: 8px; border-width: 1px; }
+    .program { margin-top: 7px; }
+    .program pre.code { font-size: 9px; }
+    .foot { display: none; }
+
+    /* Keep each card/code block whole; the whole sheet targets a single page. */
+    .card, .panel, .start, pre.code, .row, .swatch, .tips li { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="sheet">
+
+  <header class="hero">
+    <div class="robot">🤖</div>
+    <div>
+      <h1>My Robot Cheat Sheet</h1>
+      <p>Tell the mBot2 what to do with Python — it moves, glows, and beeps!</p>
+      <div class="leds" aria-hidden="true">
+        <span style="color:#ff5c5c;background:#ff5c5c"></span>
+        <span style="color:#ffb020;background:#ffb020"></span>
+        <span style="color:#37d67a;background:#37d67a"></span>
+        <span style="color:#2f9bff;background:#2f9bff"></span>
+        <span style="color:#a06bff;background:#a06bff"></span>
+      </div>
+    </div>
+  </header>
+
+  <section class="start">
+    <span class="tag">⭐ Always start like this</span>
+    <pre class="code mono"><span class="k">from</span> mbot2 <span class="k">import</span> MBot2
+
+bot <span class="k">=</span> <span class="f">MBot2</span>()          <span class="c"># wakes up & connects to the robot</span>
+
+<span class="c"># 👉 put your commands here! (see the cards below)</span>
+
+bot.<span class="f">disconnect</span>()       <span class="c"># say goodbye at the end</span></pre>
+  </section>
+
+  <section class="grid">
+
+    <div class="card move">
+      <h2><span class="emoji">🚗</span> Move</h2>
+      <p class="sub">Speed is 0–100. Add seconds and it stops by itself.</p>
+      <div class="row"><code>bot.forward(50, 2)</code><span class="desc">drive ahead for 2 seconds</span></div>
+      <div class="row"><code>bot.backward(50, 2)</code><span class="desc">drive backwards</span></div>
+      <div class="row"><code>bot.turn_left(50, 1)</code><span class="desc">spin left</span></div>
+      <div class="row"><code>bot.turn_right(50, 1)</code><span class="desc">spin right</span></div>
+      <div class="row"><code>bot.turn(90)</code><span class="desc">turn exactly 90° (+ right, − left)</span></div>
+      <div class="row"><code>bot.stop()</code><span class="desc">stop the wheels now</span></div>
+    </div>
+
+    <div class="card lights">
+      <h2><span class="emoji">🌈</span> Lights</h2>
+      <p class="sub">Mix red, green &amp; blue (each 0–255). See the mixer below!</p>
+      <div class="row"><code>bot.led(0, 255, 0)</code><span class="desc">all 5 lights turn green</span></div>
+      <div class="row"><code>bot.led(255, 0, 0, which=1)</code><span class="desc">just light #1 (1–5) turns red</span></div>
+      <div class="row"><code>bot.led_off()</code><span class="desc">lights off</span></div>
+      <div class="row"><code>bot.led_effect("rainbow")</code><span class="desc">a rainbow light show ✨</span></div>
+    </div>
+
+    <div class="card sound">
+      <h2><span class="emoji">🔊</span> Sound</h2>
+      <p class="sub">Bigger number = higher squeaky note.</p>
+      <div class="row"><code>bot.beep(880)</code><span class="desc">play a high beep</span></div>
+      <div class="row"><code>bot.beep(220)</code><span class="desc">play a low beep</span></div>
+      <div class="row"><code>bot.play_note(60)</code><span class="desc">play a piano note (0–132)</span></div>
+      <div class="row"><code>bot.volume(80)</code><span class="desc">how loud (0–100)</span></div>
+    </div>
+
+    <div class="card screen">
+      <h2><span class="emoji">📺</span> Screen &amp; Wait</h2>
+      <p class="sub">Words on the robot's little screen.</p>
+      <div class="row"><code>bot.show("Hi!")</code><span class="desc">show text on the screen</span></div>
+      <div class="row"><code>bot.sleep(1)</code><span class="desc">wait 1 second, then keep going</span></div>
+    </div>
+
+    <div class="card sense">
+      <h2><span class="emoji">👀</span> Sensors</h2>
+      <p class="sub">Ask the robot a question — it gives an answer back.</p>
+      <div class="row"><code>bot.distance()</code><span class="desc">how far away is a wall? (cm)</span></div>
+      <div class="row"><code>bot.battery()</code><span class="desc">battery left (0–100)</span></div>
+      <div class="row"><code>bot.brightness()</code><span class="desc">how bright is the room?</span></div>
+      <div class="row"><code>bot.loudness()</code><span class="desc">how noisy is it?</span></div>
+      <div class="row"><code>bot.button("a")</code><span class="desc">is button A being pressed?</span></div>
+    </div>
+
+  </section>
+
+  <section class="lower">
+    <div class="panel">
+      <h2>🎨 Mix your own light color</h2>
+      <p class="sub mono" style="color:var(--ink-soft);font-weight:700;margin:-4px 0 12px">bot.led( red , green , blue )</p>
+      <div class="mix">
+        <div class="swatch"><span class="chip" style="background:#ff3b3b"></span><code>bot.led(255, 0, 0)</code><span class="name">red</span></div>
+        <div class="swatch"><span class="chip" style="background:#2ecb57"></span><code>bot.led(0, 255, 0)</code><span class="name">green</span></div>
+        <div class="swatch"><span class="chip" style="background:#2f7bff"></span><code>bot.led(0, 0, 255)</code><span class="name">blue</span></div>
+        <div class="swatch"><span class="chip" style="background:#ffd21f"></span><code>bot.led(255, 255, 0)</code><span class="name">yellow</span></div>
+        <div class="swatch"><span class="chip" style="background:#c04bff"></span><code>bot.led(200, 0, 255)</code><span class="name">purple</span></div>
+        <div class="swatch"><span class="chip" style="background:#26e0d4"></span><code>bot.led(0, 255, 255)</code><span class="name">aqua</span></div>
+        <div class="swatch"><span class="chip" style="background:#ffffff;box-shadow:inset 0 0 0 2px rgba(0,0,0,.15)"></span><code>bot.led(255, 255, 255)</code><span class="name">white</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>💡 Good to know</h2>
+      <ul class="tips">
+        <li><span class="b">🐢</span><span>Small speed = slow &amp; gentle. Big speed = zoomy! Try <code>20</code> then <code>80</code>.</span></li>
+        <li><span class="b">⏱️</span><span>The second number is <b>time</b>. <code>forward(50, 3)</code> drives for 3 seconds.</span></li>
+        <li><span class="b">↩️</span><span><code>turn(90)</code> goes right, <code>turn(-90)</code> goes left.</span></li>
+        <li><span class="b">🖐️</span><span>Give a command a friend — put <code>bot.sleep(1)</code> between them to pause.</span></li>
+        <li><span class="b">🛑</span><span>Robot gone wild? Turn it off, or run <code>bot.stop()</code>.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="panel program">
+    <span class="tag">🚀 Try this whole program!</span>
+    <pre class="code mono"><span class="k">from</span> mbot2 <span class="k">import</span> MBot2
+
+bot <span class="k">=</span> <span class="f">MBot2</span>()
+
+bot.<span class="f">show</span>(<span class="n">"Let's go!"</span>)
+bot.<span class="f">led</span>(<span class="n">200</span>, <span class="n">0</span>, <span class="n">255</span>)      <span class="c"># glow purple</span>
+bot.<span class="f">forward</span>(<span class="n">40</span>, <span class="n">2</span>)        <span class="c"># drive for 2 seconds</span>
+bot.<span class="f">turn</span>(<span class="n">180</span>)             <span class="c"># spin around</span>
+bot.<span class="f">led_effect</span>(<span class="n">"rainbow"</span>)  <span class="c"># rainbow party 🌈</span>
+bot.<span class="f">beep</span>(<span class="n">880</span>)             <span class="c"># happy beep!</span>
+
+bot.<span class="f">disconnect</span>()</pre>
+  </section>
+
+  <p class="foot">Made for programming the mBot2 🤖 &nbsp;•&nbsp; Save it, run it, change the numbers, see what happens!</p>
+
+</div>
+
+</body>
+</html>

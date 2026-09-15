@@ -10,6 +10,7 @@
     { "path": "../parser" },
     { "path": "../runtime" },
     { "path": "../turtle" },
-    { "path": "../edu" }
+    { "path": "../edu" },
+    { "path": "../board-reader" }
   ]
 }

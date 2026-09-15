@@ -53,6 +53,7 @@ import {
   computeDiagnosticGutterLines,
   createA11yAnnouncer,
   createAppShell,
+  createBoardImportController,
   createCanvasRenderTarget,
   createCanvasViewController,
   createDiagnosticsController,
@@ -63,6 +64,8 @@ import {
   createKeyValueStorageAdapter,
   createLessonPaneController,
   createParserHighlighter,
+  createRobotControlPanelController,
+  createRobotRunController,
   createRunController,
   createRunLogController,
   createRunToggleActionHandlers,
@@ -99,6 +102,8 @@ import {
   toTutorOutputListItems,
 } from "../src/index.js";
 import type {
+  BoardImportState,
+  BoardRecognitionProvider,
   DiagnosticListItem,
   Canvas2DContext,
   ExecutionWorkerReport,
@@ -110,7 +115,14 @@ import type {
   TutorOutputViewItem,
   WorkedExampleViewItem,
   RunStatus,
+  RobotControlPanelView,
 } from "../src/index.js";
+import { createMBot2BrowserConnector } from "./mbot2-browser.js";
+import {
+  createLlmBoardRecognitionProvider,
+  type LlmBoardRecognitionClient,
+  type RasterImage,
+} from "@openlogo/board-reader";
 import type { Diagnostic, DiagnosticSeverity } from "@openlogo/core";
 import {
   IMMEDIATE_SCHEDULER,
@@ -148,6 +160,20 @@ const resetButton = assertPresent(
   document.getElementById("reset-button"),
   "reset-button",
   (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const boardImportButton = assertPresent(
+  document.getElementById("board-import-button"),
+  "board-import-button",
+  (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const boardImageInput = assertPresent(
+  document.getElementById("board-image-input"),
+  "board-image-input",
+  (value): value is HTMLInputElement => value instanceof HTMLInputElement,
+);
+const boardImportStatusElement = assertPresent<HTMLElement>(
+  document.getElementById("board-import-status"),
+  "board-import-status",
 );
 const speedSliderElement = assertPresent(
   document.getElementById("speed-slider"),
@@ -188,6 +214,64 @@ const turtleStateElement = assertPresent<HTMLElement>(
   document.getElementById("turtle-state"),
   "turtle-state",
 );
+const robotElements = {
+  connect: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-connect"),
+    "robot-connect",
+  ),
+  disconnect: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-disconnect"),
+    "robot-disconnect",
+  ),
+  status: assertPresent<HTMLElement>(
+    document.getElementById("robot-status"),
+    "robot-status",
+  ),
+  speed: assertPresent<HTMLInputElement>(
+    document.getElementById("robot-speed"),
+    "robot-speed",
+  ),
+  speedValue: assertPresent<HTMLOutputElement>(
+    document.getElementById("robot-speed-value"),
+    "robot-speed-value",
+  ),
+  duration: assertPresent<HTMLSelectElement>(
+    document.getElementById("robot-duration"),
+    "robot-duration",
+  ),
+  forward: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-forward"),
+    "robot-forward",
+  ),
+  backward: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-backward"),
+    "robot-backward",
+  ),
+  left: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-left"),
+    "robot-left",
+  ),
+  right: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-right"),
+    "robot-right",
+  ),
+  stop: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-stop"),
+    "robot-stop",
+  ),
+  refresh: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-refresh"),
+    "robot-refresh",
+  ),
+  battery: assertPresent<HTMLOutputElement>(
+    document.getElementById("robot-battery"),
+    "robot-battery",
+  ),
+  distance: assertPresent<HTMLOutputElement>(
+    document.getElementById("robot-distance"),
+    "robot-distance",
+  ),
+};
 const announcerPoliteElement = assertPresent<HTMLElement>(
   document.getElementById("announcer-polite"),
   "announcer-polite",
@@ -252,6 +336,170 @@ const shell = createAppShell(state);
 const lessonPane = createLessonPaneController(state);
 mountLessonPane(shell, lessonPane);
 
+const robotControls = createRobotControlPanelController(
+  createMBot2BrowserConnector(),
+  () => state.getState().runStatus === "running",
+);
+const runOnRobotButton = assertPresent<HTMLButtonElement>(
+  document.getElementById("run-on-robot-button"),
+  "run-on-robot-button",
+);
+const movementButtons = [
+  robotElements.forward,
+  robotElements.backward,
+  robotElements.left,
+  robotElements.right,
+];
+
+const penInputs = {
+  downAngle: assertPresent<HTMLInputElement>(
+    document.getElementById("robot-pen-down-angle"),
+    "robot-pen-down-angle",
+  ),
+  raisedAngle: assertPresent<HTMLInputElement>(
+    document.getElementById("robot-pen-raised-angle"),
+    "robot-pen-raised-angle",
+  ),
+  measuredLiftMillimeters: assertPresent<HTMLInputElement>(
+    document.getElementById("robot-pen-measured-lift"),
+    "robot-pen-measured-lift",
+  ),
+  liftMillimeters: assertPresent<HTMLInputElement>(
+    document.getElementById("robot-pen-lift"),
+    "robot-pen-lift",
+  ),
+  settleMilliseconds: assertPresent<HTMLInputElement>(
+    document.getElementById("robot-pen-settle"),
+    "robot-pen-settle",
+  ),
+};
+const penButtons = {
+  up: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-pen-up"),
+    "robot-pen-up",
+  ),
+  down: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-pen-down"),
+    "robot-pen-down",
+  ),
+  testDown: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-pen-test-down"),
+    "robot-pen-test-down",
+  ),
+  testRaised: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-pen-test-raised"),
+    "robot-pen-test-raised",
+  ),
+  confirm: assertPresent<HTMLButtonElement>(
+    document.getElementById("robot-pen-confirm"),
+    "robot-pen-confirm",
+  ),
+};
+const penStateOutput = assertPresent<HTMLOutputElement>(
+  document.getElementById("robot-pen-state"),
+  "robot-pen-state",
+);
+const penCalibrationOutput = assertPresent<HTMLOutputElement>(
+  document.getElementById("robot-pen-calibration-status"),
+  "robot-pen-calibration-status",
+);
+
+function renderRobotControls(view: RobotControlPanelView): void {
+  const connected = view.status === "connected";
+  const executionLocked = state.getState().runStatus === "running";
+  runOnRobotButton.disabled =
+    view.busy || !connected || executionLocked || !view.penConfirmed;
+  const penLocked = view.busy || !connected || executionLocked;
+  for (const input of Object.values(penInputs)) input.disabled = penLocked;
+  for (const button of Object.values(penButtons)) button.disabled = penLocked;
+  penButtons.up.disabled = penLocked || !view.penConfirmed;
+  penButtons.down.disabled = penLocked || !view.penConfirmed;
+  penCalibrationOutput.value = view.penConfirmed
+    ? "Confirmed"
+    : "Not confirmed";
+  penStateOutput.value = view.penState;
+  robotElements.status.textContent = view.statusMessage;
+  robotElements.connect.disabled =
+    view.busy || connected || view.status === "unsupported";
+  robotElements.disconnect.disabled = view.busy || !connected;
+  for (const button of movementButtons)
+    button.disabled = view.busy || !connected || executionLocked;
+  robotElements.stop.disabled = !connected;
+  robotElements.refresh.disabled = view.busy || !connected || executionLocked;
+  robotElements.speed.disabled = view.busy || !connected;
+  robotElements.duration.disabled = view.busy || !connected;
+  robotElements.speedValue.value = `${view.speed}%`;
+  robotElements.battery.value =
+    view.battery === undefined ? "--" : `${view.battery}%`;
+  robotElements.distance.value =
+    view.distance === undefined ? "--" : `${view.distance} cm`;
+}
+
+const initialPenSettings = robotControls.getView().penSettings;
+for (const [name, input] of Object.entries(penInputs)) {
+  const value = initialPenSettings[name as keyof typeof initialPenSettings];
+  input.value = Number.isFinite(value) ? String(value) : "";
+  input.addEventListener("input", () =>
+    robotControls.setPenSettings({ [name]: input.valueAsNumber }),
+  );
+}
+robotControls.subscribe(renderRobotControls);
+penButtons.up.addEventListener(
+  "click",
+  () => void robotControls.setPenDown(false),
+);
+penButtons.down.addEventListener(
+  "click",
+  () => void robotControls.setPenDown(true),
+);
+penButtons.testDown.addEventListener(
+  "click",
+  () => void robotControls.testPenAngle("downAngle"),
+);
+penButtons.testRaised.addEventListener(
+  "click",
+  () => void robotControls.testPenAngle("raisedAngle"),
+);
+penButtons.confirm.addEventListener("click", () =>
+  robotControls.confirmPenSettings(),
+);
+state.subscribe(() => renderRobotControls(robotControls.getView()));
+robotElements.connect.addEventListener(
+  "click",
+  () => void robotControls.connect(),
+);
+robotElements.disconnect.addEventListener("click", () =>
+  robotControls.disconnect(),
+);
+robotElements.forward.addEventListener(
+  "click",
+  () => void robotControls.move("forward"),
+);
+robotElements.backward.addEventListener(
+  "click",
+  () => void robotControls.move("backward"),
+);
+robotElements.left.addEventListener(
+  "click",
+  () => void robotControls.move("left"),
+);
+robotElements.right.addEventListener(
+  "click",
+  () => void robotControls.move("right"),
+);
+robotElements.stop.addEventListener("click", () => void robotControls.stop());
+robotElements.refresh.addEventListener(
+  "click",
+  () => void robotControls.refreshStatus(),
+);
+robotElements.speed.addEventListener("input", () =>
+  robotControls.setSpeed(Number(robotElements.speed.value)),
+);
+robotElements.duration.addEventListener("change", () =>
+  robotControls.setDuration(Number(robotElements.duration.value)),
+);
+window.addEventListener("beforeunload", () => robotControls.dispose());
+
 /**
  * #315 — the CM6 `EditorView`. `editorController` is the same headless seam every other pane
  * binds through (`editor.ts`); its `onLocalChange`/`onLocalSelectionChange` callbacks below are
@@ -268,6 +516,121 @@ mountLessonPane(shell, lessonPane);
 const highlighter = createParserHighlighter();
 const editorController = createEditorController(state, { highlighter });
 mountEditorPane(shell, editorController);
+
+const boardRecognitionProvider = globalThis as typeof globalThis & {
+  openLogoBoardRecognitionProvider?: BoardRecognitionProvider;
+  openLogoBoardRecognitionClient?: LlmBoardRecognitionClient;
+};
+const configuredProvider =
+  boardRecognitionProvider.openLogoBoardRecognitionProvider;
+const configuredClient =
+  boardRecognitionProvider.openLogoBoardRecognitionClient ??
+  createDevProxyBoardRecognitionClient();
+const boardImportController = createBoardImportController(
+  editorController,
+  configuredProvider ?? createLlmBoardRecognitionProvider(configuredClient),
+  {
+    onStateChange: (importState) => {
+      renderBoardImportState(
+        importState,
+        boardImportStatusElement,
+        boardImportButton,
+      );
+    },
+  },
+);
+
+/** Talks to the `/api/recognize-board` proxy (`vite.config.ts`); overridable via `globalThis`. */
+function createDevProxyBoardRecognitionClient(): LlmBoardRecognitionClient {
+  return {
+    name: "dev-proxy",
+    async recognize(request, signal) {
+      const response = await fetch("/api/recognize-board", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(request),
+        signal: signal instanceof AbortSignal ? signal : undefined,
+      });
+      const payload: unknown = await response.json();
+      if (!response.ok) {
+        const message =
+          payload && typeof payload === "object" && "error" in payload
+            ? String((payload as { error: unknown }).error)
+            : "LLM board recognition request failed.";
+        throw new Error(message);
+      }
+      return payload;
+    },
+  };
+}
+
+boardImportButton.addEventListener("click", () => {
+  boardImageInput.click();
+});
+boardImageInput.addEventListener("change", () => {
+  const file = boardImageInput.files?.[0];
+  boardImageInput.value = "";
+  if (file) {
+    void decodeRasterImage(file)
+      .then((image) => boardImportController.importImage(image))
+      .catch((error: unknown) => {
+        boardImportStatusElement.textContent =
+          error instanceof Error
+            ? error.message
+            : "Could not read the selected image.";
+      });
+  }
+});
+
+async function decodeRasterImage(file: File): Promise<RasterImage> {
+  if (!file.type.startsWith("image/")) {
+    throw new TypeError("Choose a PNG, JPEG, or WebP image.");
+  }
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    bitmap.close();
+    throw new Error("This browser cannot decode board images.");
+  }
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  return {
+    width: imageData.width,
+    height: imageData.height,
+    rgba: new Uint8Array(imageData.data),
+    encodedImageBase64: await readFileAsBase64(file),
+    mimeType: file.type,
+  };
+}
+
+async function readFileAsBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+function renderBoardImportState(
+  importState: BoardImportState,
+  statusElement: HTMLElement,
+  button: HTMLButtonElement,
+): void {
+  button.disabled = importState.status === "recognizing";
+  statusElement.textContent = {
+    idle: "",
+    recognizing: "Recognizing board image...",
+    succeeded: importState.result?.issues.length
+      ? "Image imported with recognition warnings. Check the generated code."
+      : "Image imported into the editor.",
+    failed: importState.error ?? "Image import failed.",
+  }[importState.status];
+}
 
 const prefersReducedMotion = window.matchMedia(
   "(prefers-reduced-motion: reduce)",
@@ -490,13 +853,21 @@ const executionHost = selectExecutionHost(
     });
   },
 );
-const runController = createRunController(state, {
-  canvasView,
-  executionHost,
-  inputPrompt: inputPromptController,
-  scheduler,
-  reducedMotion: prefersReducedMotion,
-});
+const runController = createRobotRunController(
+  createRunController(state, {
+    canvasView,
+    executionHost,
+    inputPrompt: inputPromptController,
+    scheduler,
+    reducedMotion: prefersReducedMotion,
+  }),
+  robotControls,
+  () => canvasView.repaint(),
+);
+runOnRobotButton.addEventListener(
+  "click",
+  () => void runController.runOnRobot(),
+);
 mountRunController(shell, runController);
 /**
  * #952 — the studio's keyboard and pointer input, so `on_key` and `on_click` actually fire. Every

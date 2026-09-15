@@ -14,7 +14,7 @@ these rules.
 reimagining of Logo: **programming + turtle graphics + geometry + AI coaching + discovery
 learning**. The language contract is fully specified in [`spec/`](../../spec/README.md).
 
-We implement that spec as a **TypeScript 7 monorepo** in `openlogo/` with six packages
+We implement that spec as a **TypeScript 7 monorepo** in `openlogo/` with eight packages
 (see [ADR-0001](../../docs/adr/0001-tech-stack.md)):
 
 | Package | Owns | Primary agent(s) |
@@ -23,8 +23,10 @@ We implement that spec as a **TypeScript 7 monorepo** in `openlogo/` with six pa
 | `@openlogo/parser` | lexis, reader, EBNF grammar, AST, reserved words, syntax highlighting, syntax + semantic checker | language-designer, interpreter |
 | `@openlogo/runtime` | evaluator, scoping, procedures, control forms, comprehensions, places/mutation, equality, safety | interpreter |
 | `@openlogo/turtle` | turtle/sprite state, pen/heading/shape, rendering (Canvas/SVG/PNG), animation, export, accessibility | turtle-engine |
+| `@openlogo/turtlebot` | physical-turtle trace translation, MQTT publishing, and mBot2 CyberPi firmware | turtle-engine |
 | `@openlogo/studio` | browser web app: editor/REPL, Canvas turtle view, run/stop/step, diagnostics UI, tooling/LSP, lesson pane, persistence | learner-experience |
 | `@openlogo/edu` | learner levels, `explain`/`why`/`hint`/`debug`, geometry stdlib, AI tutor, curriculum, examples | geometry-teacher, ai-tutor, curriculum |
+| `@openlogo/board-reader` | headless magnetic-board recognition, deterministic layout/source generation, parser validation | learner-experience |
 
 **Cross-cutting agents own no package:** `orchestrator` (coordination), `product-owner` (backlog +
 spec stewardship), `testing` (conformance/QA suites), `documentation` (docs), and `devops` (CI/CD

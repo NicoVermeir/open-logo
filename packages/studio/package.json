@@ -36,7 +36,8 @@
     "@openlogo/edu": "0.3.0",
     "@openlogo/parser": "0.3.0",
     "@openlogo/runtime": "0.3.0",
-    "@openlogo/turtle": "0.3.0"
+    "@openlogo/turtle": "0.3.0",
+    "@openlogo/board-reader": "0.3.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

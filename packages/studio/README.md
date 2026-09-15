@@ -12,7 +12,108 @@ persistence, and accessibility. It composes the other packages and owns no langu
   [`tooling.md`](../../spec/tooling.md) (LSP integration),
   [`interaction-events.md`](../../spec/interaction-events.md).
 - **Depends on:** `@openlogo/parser`, `@openlogo/runtime`, `@openlogo/turtle`, `@openlogo/edu`,
-  `@openlogo/core`.
+  `@openlogo/core`, `@openlogo/board-reader`.
+
+## Board image import
+
+The Run controls include an image-import affordance. It decodes a selected board photograph
+locally and delegates recognition to an injected `@openlogo/board-reader` LLM provider. During
+Vite development, the built-in `/api/recognize-board` proxy reads `packages/studio/.env.local`,
+keeps the API key server-side, and forwards requests to an OpenAI-compatible vision endpoint.
+
+Copy `.env.example` to `.env.local`, set `OPENLOGO_LLM_ENDPOINT` and `OPENLOGO_LLM_MODEL`, then
+run `az login`. The proxy obtains a short-lived Microsoft Entra token with
+`az account get-access-token`; no API key is read or stored. Set `OPENLOGO_AZURE_TENANT_ID` when
+the current Azure CLI tenant is not the Foundry tenant. Generated source is placed in the editor
+but is never executed automatically. The proxy is a development-server integration; production
+deployments need the same `/api/recognize-board` contract hosted by their backend.
+
+## mBot2 manual controls
+
+The collapsible **mBot2 manual controls** below the turtle canvas provide a hardware test surface
+independent of OpenLogo program execution. In a Chromium browser with Web Bluetooth enabled, use
+**Connect** to select one nearby Makeblock/CyberPi/mBot device. The panel exposes bounded forward,
+backward, left, and right pulses, emergency stop, speed (10-100%), pulse duration (0.2-2 seconds),
+battery, and ultrasonic-distance readings. It never exposes indefinite movement or raw scripts.
+
+Web Bluetooth requires a secure context (`https://` or local development on `localhost`) and a
+user gesture for device selection. The current mBot2 GATT mapping is provisional: service `ffe1`,
+notifications on `ffe2`, and writes on `ffe3`. Confirm these UUIDs on the target Bluetooth firmware
+before relying on the panel; USB and Bluetooth firmware variants may expose different transports.
+
+## Run on turtlebot
+
+Connect and confirm pen calibration through the manual controls, then use **Run on turtlebot** in the run toolbar. Studio
+preflights the entire program before movement and replays its trace on the connected robot.
+The virtual turtle advances after each acknowledged straight segment; a turn updates its heading
+after the complete pen-offset maneuver and any pen restoration. Hidden repositioning never draws on
+the canvas. Playback does not use a separate animation timer.
+This is command synchronization, not measured position telemetry; wheel slip is not corrected.
+
+The initial supported commands are `forward`, `back`, `left`, `right`, `pen_up`, `pen_down`,
+`print`, `set_color`, `set_width`, `set_background`, `show_turtle`, and `hide_turtle`. Core loops,
+procedures, and distance and turn expressions work through the existing parser/runtime, including
+`right 360 / :sides`. Studio wraps turns in generated Logo procedures and reads their evaluated
+arguments from the public runtime trace, preserving signed angles and full rotations without
+evaluating an expression twice. Generated names avoid source collisions and keep source positions
+unchanged; wrapper events are hidden from playback. Unsupported commands, profiles, trace effects,
+and invalid arguments are rejected before movement, with the reason shown in the robot panel.
+
+One Logo unit maps to **1 mm**. Motion uses at most 20 mm or 10 degrees per command, with
+`speed=30`, a 500-segment limit (including all offset-compensation motions), and a 5,000-instruction preflight budget (including generated
+wrapper instructions). Each turn wrapper also uses one procedure stack frame. The firmware must support
+`mbot2.straight(distance, speed=30)` and `mbot2.turn(angle, speed=30)` and return only after motion
+completes. These firmware assumptions and physical timing have not yet been hardware-validated.
+Test short programs on a clear floor with the robot's power switch within reach.
+
+Each run treats the current **pen-tip position** as the virtual origin and the chassis heading as
+heading zero; it does not home the robot. Appearance commands affect only the canvas; pen commands
+also drive the physical servo. Stop cancels subsequent
+segments and requests motor stop; Bluetooth/firmware delays mean this is not an instantaneous
+safety stop. Reset also clears the virtual run but does not return the physical robot to its start.
+Disconnects or missing acknowledgements abort the run. Manual movement and virtual Run/Step
+cannot overlap a physical program; canvas input is disabled during physical playback.
+
+### Pen calibration and lift
+
+The pen uses **mBot2 Shield socket 3** and absolute `mbot2.servo_set(angle,3)` targets.
+The initial targets are **pen down 90 degrees**, **pen up 115 degrees**, with **200 ms** settling.
+With both lift fields blank, commands use these exact endpoints. Angles remain adjustable
+(integer 0-180 degrees), as does settling time (100-2000 ms). Changing fields never actuates the servo;
+the endpoint test buttons deliberately move it. Keep the linkage clear and the power switch accessible.
+Confirm only after checking the endpoints and intermediate lift on the actual mechanism.
+
+Manual **Pen up / Pen down** and Logo `pen_up` / `pen_down` share this calibration. Requested
+lift is optional: enter both measured vertical pen-tip lift and requested **Lift travel (mm)**
+to enable travel calibration. Requested lift cannot exceed measured lift. In this mode only,
+the raised angle is linearly interpolated and rounded to an
+integer; millimetres are approximate for a nonlinear linkage. Manual actions never change the canvas.
+Settings last for this page session; edits and reconnecting require confirmation again.
+
+A physical run snapshots the settings without moving the pen at startup. An executed Logo
+`pen_down` lowers it; `pen_up` raises it. Turns temporarily lift the pen and restore it only when
+the latest executed pen command was `pen_down`. Neither the canvas default nor an earlier manual
+pen-down authorizes restoration. The canvas retains Logo's normal initial pen-down state;
+use an explicit pen command to align physical and virtual drawing at the start of a program.
+Each pen command waits for acknowledgement and the configured settling time before subsequent motion
+or virtual pen updates. The servo has no measured-position feedback: "commanded" is not verified arrival.
+On completion, failure, or cancellation, Studio attempts motor stop then a calibrated lift while still
+holding hardware ownership. Disconnection prevents cleanup. Stop is cooperative, not an immediate
+hardware safety interlock. Firmware timing and mechanical calibration require hardware validation.
+
+### Pen mounting offset
+
+Studio assumes the pen tip is **126 mm forward and 24 mm left** of the chassis rotation center.
+For each nonzero turn it lifts the pen, executes the full requested rotation, turns toward the
+required chassis displacement, translates, then restores the requested heading. The displacement
+is the difference between the pen's old and new offset vectors, so the lowered tip returns to the
+same Logo vertex. Full rotations still execute; zero turns require no hardware command.
+There is no sideways-drive command or continuous rotation about a stationary pen tip.
+
+Keep the surrounding area clear: the lifted tip and chassis move outside the drawn path during
+these maneuvers, and compensation uses additional battery and time. The geometry is verified in
+simulation and mocked Bluetooth tests, not on the physical mechanism. Wheel slip, firmware motion
+accuracy, and any horizontal shift caused by lifting the linkage remain unmeasured.
 
 ## State model + app shell (#123)
 

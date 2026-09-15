@@ -184,6 +184,44 @@ test("index.html gives the lesson pane, Canvas, run log, turtle state, output, a
   );
 });
 
+test("index.html provides bounded, accessible mBot2 manual controls below the canvas", () => {
+  const canvasPosition = indexHtml.indexOf('id="turtle-canvas"');
+  const robotPanelPosition = indexHtml.indexOf('id="robot-controls"');
+  assert.ok(
+    robotPanelPosition > canvasPosition,
+    "robot controls must follow the canvas",
+  );
+  assert.match(indexHtml, /<details id="robot-controls"/);
+  assert.match(indexHtml, /id="robot-speed"[^>]*min="10"[^>]*max="100"/);
+  assert.match(
+    indexHtml,
+    /id="robot-duration"[\s\S]*value="0\.2"[\s\S]*value="2"/,
+  );
+  for (const id of [
+    "robot-connect",
+    "robot-disconnect",
+    "robot-forward",
+    "robot-backward",
+    "robot-left",
+    "robot-right",
+    "robot-stop",
+    "robot-refresh",
+  ]) {
+    assert.match(indexHtml, new RegExp(`id="${id}"[^>]*type="button"`));
+  }
+  assert.match(indexHtml, /id="robot-stop"[^>]*aria-label="Emergency stop"/);
+  assert.match(
+    indexHtml,
+    /id="robot-status"[^>]*role="status"[^>]*aria-live="polite"/,
+  );
+});
+
+test("web/main.ts keeps emergency stop available while robot controls are busy", () => {
+  assert.match(mainTs, /robotElements\.stop\.disabled = !connected/);
+  assert.doesNotMatch(mainTs, /robotElements\.stop\.disabled = view\.busy/);
+  assert.match(mainTs, /robotControls\.stop\(\)/);
+});
+
 test("#952: index.html renders the canvas activation button, described help text, and the aria-describedby that links them — all from canvas-interaction.ts's constants", () => {
   const normalize = (text) => text.replace(/\s+/g, " ").trim();
   const buttonMatch = indexHtml.match(

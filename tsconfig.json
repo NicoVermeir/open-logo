@@ -6,7 +6,9 @@
     { "path": "packages/parser" },
     { "path": "packages/runtime" },
     { "path": "packages/turtle" },
+    { "path": "packages/turtlebot" },
     { "path": "packages/edu" },
+    { "path": "packages/board-reader" },
     { "path": "packages/studio" }
   ]
 }

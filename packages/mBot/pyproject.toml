@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mbot2"
+version = "0.1.0"
+description = "Control a Makeblock mBot2 / CyberPi from Python over Bluetooth (no mBlock)."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["bleak>=0.21"]
+authors = [{ name = "DrorSh" }]
+license = { text = "MIT" }
+
+[project.urls]
+Homepage = "https://github.com/DrorSh/mbot_python"
+
+[tool.setuptools]
+packages = ["mbot2"]

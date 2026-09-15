@@ -1,6 +1,6 @@
 # `packages/` — OpenLogo source
 
-This is where OpenLogo's implementation source lives: a TypeScript 7 monorepo of six
+This is where OpenLogo's implementation source lives: a TypeScript 7 monorepo of eight
 `@openlogo/*` packages. Each package's **source root is `packages/<name>/src/`**, with
 `src/index.ts` as its **only public entry point**. See
 [`docs/architecture.md`](../docs/architecture.md) for the full monorepo definition and the
@@ -20,6 +20,8 @@ cross-cutting contracts, and [`docs/delivery.md`](../docs/delivery.md) for the r
 | [`@openlogo/turtle`](turtle/README.md) | `turtle/src/` | turtle/sprite state, Canvas/SVG/PNG rendering, export, a11y | `@turtle-engine` | core, runtime |
 | [`@openlogo/studio`](studio/README.md) | `studio/src/` | **browser web app**: editor, Canvas view, run loop, diagnostics UI | `@learner-experience` | parser, runtime, turtle, edu, core |
 | [`@openlogo/edu`](edu/README.md) | `edu/src/` | levels, `explain`/`why`/`hint`/`debug`, geometry stdlib, AI tutor | `@geometry-teacher` + `@ai-tutor` + `@curriculum` | runtime, core |
+| [`@openlogo/board-reader`](board-reader/README.md) | `board-reader/src/` | headless board-recognition contract, deterministic layout/source generation, parser validation | `@learner-experience` | core, parser |
+| [`@openlogo/turtlebot`](turtlebot/README.md) | `turtlebot/src/` | physical-turtle trace translation and MQTT command publishing | `@turtle-engine` | core |
 
 Each package has a scoped working agreement in
 [`.github/instructions/<name>.instructions.md`](../.github/instructions/) (`applyTo: packages/<name>/**`).

@@ -7,7 +7,8 @@
 
 ## 1. Overview
 
-OpenLogo is one monorepo. Six `@openlogo/*` packages implement the spec; a shared set of
+OpenLogo is one monorepo. Seven `@openlogo/*` packages implement or present the spec, plus the
+optional physical-turtle adapter; a shared set of
 **cross-cutting contracts** defines the seams between them so seven domain teams (agents) can work
 concurrently. Build order follows the spec's profile DAG: **Core Language → Turtle & Rendering**
 (minimal conformance) first.
@@ -26,8 +27,10 @@ openlogo/
 │  ├─ parser/               @openlogo/parser — lexer, reader, grammar, AST, highlighting, lints
 │  ├─ runtime/              @openlogo/runtime — evaluator, scope, procedures, control, places
 │  ├─ turtle/                @openlogo/turtle  — turtle/sprite state, rendering, animation, export
+│  ├─ turtlebot/             @openlogo/turtlebot — physical trace adapter and mBot2 firmware
 │  ├─ studio/               @openlogo/studio — editor/REPL, run/step, diagnostics UI, LSP, lessons
-│  └─ edu/                  @openlogo/edu    — levels, explain/hint, geometry stdlib, tutor, curriculum
+│  ├─ edu/                  @openlogo/edu    — levels, explain/hint, geometry stdlib, tutor, curriculum
+│  └─ board-reader/         @openlogo/board-reader — headless board recognition and source generation
 ├─ tests/
 │  └─ conformance/           Stack-neutral source → events/diagnostics fixtures (by profile)
 ├─ .github/
@@ -63,8 +66,10 @@ responsibilities, spec files, boundaries, and conventions.
 | `@openlogo/parser` | lexer, reader, EBNF grammar, **AST**, reserved words, **syntax highlighting** classes, **syntax + semantic checker** (parse/semantic/style lints) | core | language-designer, interpreter |
 | `@openlogo/runtime` | evaluator, scoping, procedures, control forms, comprehensions, places/mutation, equality, execution budget | core, parser | interpreter |
 | `@openlogo/turtle` | turtle/sprite state, pen/heading/shape, **rendering** (Canvas/SVG/PNG), animation, stepping, export, a11y | core | turtle-engine |
+| `@openlogo/turtlebot` | physical-turtle trace translation, MQTT command publishing, mBot2 CyberPi firmware | core | turtle-engine |
 | `@openlogo/studio` | **browser web app**: editor/REPL, Canvas turtle view, Run/Stop/Reset, diagnostics view, **LSP**, lesson pane, persistence, a11y | core, parser, runtime, turtle, edu | learner-experience |
 | `@openlogo/edu` | learner levels, `explain`/`why`/`hint`/`debug`, geometry stdlib (`.logo`), AI tutor, curriculum, examples | core, runtime | geometry-teacher, ai-tutor, curriculum |
+| `@openlogo/board-reader` | headless magnetic-board recognition contract, deterministic layout/source generation, confidence/issues, parser validation | core, parser | learner-experience |
 
 See the [Educational commands reference](educational-commands.md) and the
 [curriculum overview](curriculum-overview.md) for `@openlogo/edu`'s learner-facing documentation.

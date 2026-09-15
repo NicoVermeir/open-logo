@@ -110,6 +110,18 @@
           <span id="run-toggle-label" class="control-label">Start</span>
         </button>
         <button
+          id="run-on-robot-button"
+          type="button"
+          class="icon-button"
+          data-icon="play"
+          aria-label="Run on turtlebot"
+          title="Run on turtlebot"
+          disabled
+        >
+          <span class="control-icon" aria-hidden="true"></span>
+          <span class="control-label">Run on turtlebot</span>
+        </button>
+        <button
           id="reset-button"
           type="button"
           class="icon-button"
@@ -119,6 +131,23 @@
           <span class="control-icon" aria-hidden="true"></span>
           <span class="control-label">Reset</span>
         </button>
+        <button
+          id="board-import-button"
+          type="button"
+          class="icon-button"
+          data-icon="image"
+          aria-label="Import OpenLogo board image"
+        >
+          <span class="control-icon" aria-hidden="true"></span>
+          <span class="control-label">Import image</span>
+        </button>
+        <input
+          id="board-image-input"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          hidden
+        />
+        <p id="board-import-status" role="status" aria-live="polite"></p>
         <span class="speed-control">
           <label for="speed-slider">Turtle speed</label>
           <input
@@ -183,6 +212,164 @@
           aria-label="Turtle state"
           tabindex="0"
         ></p>
+        <details id="robot-controls" class="robot-controls">
+          <summary>mBot2 manual controls</summary>
+          <div class="robot-controls-body">
+            <div class="robot-connection-row">
+              <button id="robot-connect" type="button">Connect</button>
+              <button id="robot-disconnect" type="button">Disconnect</button>
+              <span id="robot-status" role="status" aria-live="polite"></span>
+            </div>
+            <div class="robot-settings">
+              <label for="robot-speed">Speed</label>
+              <input
+                id="robot-speed"
+                type="range"
+                min="10"
+                max="100"
+                step="5"
+                value="50"
+              />
+              <output id="robot-speed-value" for="robot-speed">50%</output>
+              <label for="robot-duration">Movement duration</label>
+              <select id="robot-duration">
+                <option value="0.2">0.2 s</option>
+                <option value="0.5" selected>0.5 s</option>
+                <option value="1">1.0 s</option>
+                <option value="2">2.0 s</option>
+              </select>
+            </div>
+            <div class="robot-drive-pad" aria-label="Robot drive controls">
+              <button
+                id="robot-forward"
+                type="button"
+                aria-label="Drive forward"
+                title="Drive forward"
+              >
+                &#8593;
+              </button>
+              <button
+                id="robot-left"
+                type="button"
+                aria-label="Turn left"
+                title="Turn left"
+              >
+                &#8592;
+              </button>
+              <button
+                id="robot-stop"
+                class="robot-stop"
+                type="button"
+                aria-label="Emergency stop"
+                title="Emergency stop"
+              >
+                &#9632;
+              </button>
+              <button
+                id="robot-right"
+                type="button"
+                aria-label="Turn right"
+                title="Turn right"
+              >
+                &#8594;
+              </button>
+              <button
+                id="robot-backward"
+                type="button"
+                aria-label="Drive backward"
+                title="Drive backward"
+              >
+                &#8595;
+              </button>
+            </div>
+            <fieldset class="robot-pen-calibration">
+              <legend>Pen calibration - Shield socket 3</legend>
+              <label for="robot-pen-down-angle">Pen-down angle (degrees)</label>
+              <input
+                id="robot-pen-down-angle"
+                type="number"
+                min="0"
+                max="180"
+                step="1"
+              />
+              <button id="robot-pen-test-down" type="button">
+                Test down angle
+              </button>
+              <label for="robot-pen-raised-angle"
+                >Safe raised angle (degrees)</label
+              >
+              <input
+                id="robot-pen-raised-angle"
+                type="number"
+                min="0"
+                max="180"
+                step="1"
+              />
+              <button id="robot-pen-test-raised" type="button">
+                Test raised angle
+              </button>
+              <label for="robot-pen-measured-lift"
+                >Measured raised lift (mm)</label
+              >
+              <input
+                id="robot-pen-measured-lift"
+                type="number"
+                min="0.1"
+                step="any"
+              />
+              <label for="robot-pen-lift">Lift travel (mm)</label>
+              <input id="robot-pen-lift" type="number" min="0.1" step="any" />
+              <label for="robot-pen-settle">Settling time (ms)</label>
+              <input
+                id="robot-pen-settle"
+                type="number"
+                min="100"
+                max="2000"
+                step="1"
+              />
+              <button id="robot-pen-confirm" type="button">
+                Confirm calibration
+              </button>
+              <output id="robot-pen-calibration-status" aria-live="polite"
+                >Not confirmed</output
+              >
+            </fieldset>
+            <div class="robot-readings">
+              <button
+                id="robot-pen-up"
+                type="button"
+                title="Raise physical pen"
+              >
+                &#8593; Pen up
+              </button>
+              <button
+                id="robot-pen-down"
+                type="button"
+                title="Lower physical pen"
+              >
+                &#8595; Pen down
+              </button>
+              <span
+                >Commanded pen:
+                <output id="robot-pen-state" aria-live="polite"
+                  >unknown</output
+                ></span
+              >
+            </div>
+            <div class="robot-readings">
+              <button
+                id="robot-refresh"
+                type="button"
+                aria-label="Refresh robot status"
+                title="Refresh robot status"
+              >
+                &#8635;
+              </button>
+              <span>Battery: <output id="robot-battery">--</output></span>
+              <span>Distance: <output id="robot-distance">--</output></span>
+            </div>
+          </div>
+        </details>
       </section>
       <section class="pane-output" aria-label="Output">
         <pre

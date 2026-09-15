@@ -466,7 +466,14 @@ main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  vertical-align: top;
   gap: 0.4rem;
+}
+
+#run-toggle-button,
+#reset-button {
+  min-width: 5.5rem;
+  justify-content: center;
 }
 
 /* #316 — icon run-controls: the icon is a decorative pseudo-element (aria-hidden on its span),
@@ -631,6 +638,140 @@ main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
   margin: 0.5rem 0 0;
   font-size: 0.85rem;
   color: var(--ol-navy);
+}
+
+.robot-controls {
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--ol-border);
+  padding-top: 0.65rem;
+}
+
+.robot-controls summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.robot-controls-body {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+}
+
+.robot-connection-row,
+.robot-settings,
+.robot-readings {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.robot-controls button,
+.robot-controls select {
+  min-height: 2.25rem;
+  border: 1px solid var(--ol-border);
+  border-radius: 6px;
+  background: var(--ol-surface);
+  color: var(--ol-navy);
+  font: inherit;
+  cursor: pointer;
+}
+
+.robot-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+#robot-connect {
+  padding: 0.35rem 0.8rem;
+  background: var(--ol-button-start);
+  color: var(--ol-surface);
+}
+
+#robot-disconnect {
+  padding: 0.35rem 0.8rem;
+}
+
+#robot-status {
+  flex: 1 1 12rem;
+  overflow-wrap: anywhere;
+}
+
+#robot-speed {
+  width: min(9rem, 100%);
+  accent-color: var(--ol-green);
+}
+
+.robot-drive-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 3rem);
+  grid-template-rows: repeat(3, 3rem);
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.robot-drive-pad button {
+  width: 3rem;
+  height: 3rem;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+#robot-forward {
+  grid-column: 2;
+  grid-row: 1;
+}
+#robot-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+#robot-stop {
+  grid-column: 2;
+  grid-row: 2;
+}
+#robot-right {
+  grid-column: 3;
+  grid-row: 2;
+}
+#robot-backward {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.robot-drive-pad .robot-stop {
+  background: var(--ol-button-stop);
+  border-color: var(--ol-button-stop);
+  color: var(--ol-surface);
+}
+
+.robot-readings output {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.robot-pen-calibration {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(4rem, 6rem);
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem 0;
+  border: 0;
+  border-top: 1px solid var(--ol-border);
+}
+
+.robot-pen-calibration input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.25rem;
+  font: inherit;
+}
+
+.robot-pen-calibration button,
+.robot-pen-calibration output {
+  grid-column: 1 / -1;
 }
 
 #output {

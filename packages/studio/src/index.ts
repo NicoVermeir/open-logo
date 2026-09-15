@@ -371,6 +371,14 @@ export {
 
 export { STUDIO_PROFILES } from "./profiles.js";
 
+export type {
+  BoardImportController,
+  BoardImportOptions,
+  BoardImportState,
+  BoardImportStatus,
+} from "./board-import.js";
+export { createBoardImportController } from "./board-import.js";
+
 export type { RunController, RunControllerOptions } from "./run-controller.js";
 export {
   DEFAULT_RUN_DOCUMENT,
@@ -620,3 +628,51 @@ export {
   mountTutorOutputPane,
   toTutorOutputListItems,
 } from "./tutor-output-pane.js";
+
+export type { MBot2Response } from "./mbot2-protocol.js";
+export {
+  buildMBot2ScriptFrame,
+  MBot2ResponseParser,
+  MBOT2_MODE_NO_RESPONSE,
+  MBOT2_MODE_WITH_RESPONSE,
+  MBOT2_ONLINE_MODE_FRAME,
+} from "./mbot2-protocol.js";
+
+export type {
+  MBot2BluetoothCharacteristic,
+  MBot2BluetoothDevice,
+  MBot2BluetoothRequestOptions,
+  MBot2BluetoothServer,
+  MBot2BluetoothService,
+  MBot2RequestDevice,
+  MBot2WebBluetoothDependencies,
+  MBot2WebBluetoothTransport,
+} from "./mbot2-web-bluetooth.js";
+export {
+  connectMBot2WebBluetooth,
+  MBOT2_NOTIFY_CHARACTERISTIC_UUID,
+  MBOT2_SERVICE_UUID,
+  MBOT2_WRITE_CHARACTERISTIC_UUID,
+} from "./mbot2-web-bluetooth.js";
+
+export type {
+  MBot2ManualRobot,
+  RobotPenSettings,
+} from "./mbot2-manual-robot.js";
+export {
+  createMBot2ManualRobot,
+  MBOT2_MAXIMUM_DURATION_SECONDS,
+  MBOT2_MAXIMUM_SPEED,
+  MBOT2_MINIMUM_DURATION_SECONDS,
+  MBOT2_MINIMUM_SPEED,
+} from "./mbot2-manual-robot.js";
+
+export type {
+  RobotControlConnectionStatus,
+  RobotControlPanelController,
+  RobotControlPanelView,
+  RobotMovement,
+} from "./robot-control-panel.js";
+export { createRobotControlPanelController } from "./robot-control-panel.js";
+export { runRobotProgram, createRobotRunController } from "./robot-program.js";
+export type { RobotProgramOptions } from "./robot-program.js";
