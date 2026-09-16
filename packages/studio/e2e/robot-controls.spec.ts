@@ -228,7 +228,7 @@ test("default pen settings allow forward 20 after manual pen commands without li
   ]);
 });
 
-test("Run on turtlebot executes bounded moves and updates the virtual turtle", async ({
+test("Run on turtlebot executes whole moves and updates the virtual turtle", async ({
   page,
 }) => {
   await installMBot2BluetoothMock(page);
@@ -254,12 +254,12 @@ test("Run on turtlebot executes bounded moves and updates the virtual turtle", a
   const scripts = await page.evaluate(
     () => globalThis.robotBluetoothMock?.scripts ?? [],
   );
-  expect(scripts.slice(0, 5)).toEqual([
-    "(mbot2.straight(2,speed=30),1)[1]",
-    "(mbot2.straight(2,speed=30),1)[1]",
+  expect(scripts.slice(0, -2)).toEqual([
+    "(mbot2.straight(4,speed=30),1)[1]",
     "(mbot2.servo_set(90,3),1)[1]",
-    "(mbot2.turn(10,speed=30),1)[1]",
-    "(mbot2.turn(10,speed=30),1)[1]",
+    "(mbot2.straight(10.5,speed=30),1)[1]",
+    "(mbot2.turn(20,speed=30),1)[1]",
+    "(mbot2.straight(-13.8,speed=30),1)[1]",
   ]);
   expect(scripts.slice(-2)).toEqual([
     "mbot2.EM_stop()",
@@ -269,7 +269,7 @@ test("Run on turtlebot executes bounded moves and updates the virtual turtle", a
     "(mbot2.servo_set(90,3),1)[1]",
     "(mbot2.servo_set(90,3),1)[1]",
   ]);
-  let horizontal = 24;
+  let horizontal = 26;
   let vertical = -126;
   let heading = 0;
   for (const script of scripts) {
@@ -278,10 +278,10 @@ test("Run on turtlebot executes bounded moves and updates the virtual turtle", a
     if (motion === null) continue;
     const amount = Number(motion[2]);
     if (motion[1] === "turn") {
-      expect(Math.abs(amount)).toBeLessThanOrEqual(10);
+      expect(Math.abs(amount)).toBeLessThanOrEqual(5_000);
       heading += amount;
     } else {
-      expect(Math.abs(amount)).toBeLessThanOrEqual(2);
+      expect(Math.abs(amount)).toBeLessThanOrEqual(1_000);
       horizontal += amount * 10 * Math.sin((heading * Math.PI) / 180);
       vertical += amount * 10 * Math.cos((heading * Math.PI) / 180);
     }
@@ -289,11 +289,11 @@ test("Run on turtlebot executes bounded moves and updates the virtual turtle", a
   const radians = (heading * Math.PI) / 180;
   expect(heading).toBeCloseTo(20, 8);
   expect(
-    horizontal + 126 * Math.sin(radians) - 24 * Math.cos(radians),
-  ).toBeCloseTo(0, 8);
+    horizontal + 126 * Math.sin(radians) - 26 * Math.cos(radians),
+  ).toBeCloseTo(26 - 26 * Math.cos(radians) - 12 * Math.sin(radians), 8);
   expect(
-    vertical + 126 * Math.cos(radians) + 24 * Math.sin(radians),
-  ).toBeCloseTo(40, 8);
+    vertical + 126 * Math.cos(radians) + 26 * Math.sin(radians),
+  ).toBeCloseTo(40 - 21 + 26 * Math.sin(radians) - 12 * Math.cos(radians), 8);
 });
 
 test("compensated turns restore only the current explicit down intent", async ({
@@ -369,7 +369,7 @@ test("Run on turtlebot waits for acknowledgement and reset blocks late playback"
     .click();
   await expect
     .poll(() => page.evaluate(() => globalThis.robotBluetoothMock?.scripts))
-    .toEqual(["(mbot2.straight(2,speed=30),1)[1]"]);
+    .toEqual(["(mbot2.straight(4,speed=30),1)[1]"]);
   await expect(
     page.getByRole("status", { name: "Turtle state" }),
   ).toContainText("x 0 y 0");
@@ -390,7 +390,7 @@ test("Run on turtlebot waits for acknowledgement and reset blocks late playback"
     2,
   );
   expect(scripts.filter((script) => script.includes("straight("))).toEqual([
-    "(mbot2.straight(2,speed=30),1)[1]",
+    "(mbot2.straight(4,speed=30),1)[1]",
   ]);
   expect(scripts).toContain("mbot2.EM_stop()");
 });

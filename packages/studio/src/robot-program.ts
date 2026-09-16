@@ -1,5 +1,4 @@
 import type {
-  DrawSegmentPayload,
   MovePayload,
   PenChangePayload,
   ProcedureEnterPayload,
@@ -68,7 +67,10 @@ export async function runRobotProgram(
     throw new Error("Fix the program diagnostics before running on the robot.");
   }
   const lines = source.split("\n");
-  const wrappers = new Map<string, { span: SourceSpan; direction: number }>();
+  const wrappers = new Map<
+    string,
+    { span: SourceSpan; command: "left" | "right" }
+  >();
   const definitions: string[] = [];
   const commands = new Set([
     "forward",
@@ -100,7 +102,7 @@ export async function runRobotProgram(
         throw new Error("Robot program contains too many turn commands.");
       wrappers.set(wrapper, {
         span: node.source_span,
-        direction: name === "left" ? -1 : 1,
+        command: name,
       });
       const [line, column] = node.callee.source_span.start;
       lines[line - 1] =
@@ -133,9 +135,9 @@ export async function runRobotProgram(
   if (result.diagnostics.length > 0) {
     throw new Error("Fix the program diagnostics before running on the robot.");
   }
-  const angles = new Map<number, number>();
+  const turns = new Map<number, RobotTurn>();
   const events: TraceEvent[] = [];
-  let activeTurn: { span: SourceSpan; amount: number } | undefined;
+  let activeTurn: (RobotTurn & { span: SourceSpan }) | undefined;
   for (const event of result.events) {
     if (event.kind === "procedure-enter") {
       const payload = event.payload as ProcedureEnterPayload;
@@ -144,7 +146,11 @@ export async function runRobotProgram(
         const amount = payload.args[0];
         if (typeof amount !== "number" || !Number.isFinite(amount))
           throw new Error("Robot turns require a finite numeric angle.");
-        activeTurn = { span: wrapper.span, amount: amount * wrapper.direction };
+        activeTurn = {
+          span: wrapper.span,
+          command: wrapper.command,
+          angle: amount * (wrapper.command === "left" ? -1 : 1),
+        };
         continue;
       }
     }
@@ -154,18 +160,18 @@ export async function runRobotProgram(
     )
       continue;
     if (event.kind === "turn" && activeTurn !== undefined) {
-      angles.set(event.seq, activeTurn.amount);
+      turns.set(event.seq, activeTurn);
       events.push({ ...event, source_span: activeTurn.span });
       activeTurn = undefined;
     } else if (event.source_span.start[0] <= lines.length) {
       events.push(event);
     }
   }
-  const turnAngle = (event: TraceEvent): number => {
-    const angle = angles.get(event.seq);
-    if (angle === undefined)
+  const sourceTurn = (event: TraceEvent): RobotTurn => {
+    const turn = turns.get(event.seq);
+    if (turn === undefined)
       throw new Error("Robot turn has no supported source command.");
-    return angle;
+    return turn;
   };
   const turnPlans = new Map<number, readonly RobotMotion[]>();
   let segmentCount = 0;
@@ -182,7 +188,7 @@ export async function runRobotProgram(
       );
     }
     if (event.kind === "turn") {
-      const plan = compensatedTurn(turnAngle(event));
+      const plan = compensatedTurn(sourceTurn(event));
       turnPlans.set(event.seq, plan);
       for (const motion of plan) segmentCount += motionSegments(motion);
     }
@@ -224,14 +230,12 @@ export async function runRobotProgram(
         await robot.setPenDown(false, penSettings);
         checkActive();
         for (const motion of plan) {
-          const count = motionSegments(motion);
-          for (let segment = 0; segment < count; segment++) {
-            checkActive();
-            if (motion.kind === "move")
-              await robot.moveCentimeters(motion.amount / count / 10);
-            else await robot.turnDegrees(motion.amount / count);
-            checkActive();
-          }
+          if (motion.amount === 0) continue;
+          checkActive();
+          if (motion.kind === "move")
+            await robot.moveCentimeters(motion.amount / 10);
+          else await robot.turnDegrees(motion.amount);
+          checkActive();
         }
         if (programPenDown) {
           await robot.setPenDown(true, penSettings);
@@ -244,26 +248,15 @@ export async function runRobotProgram(
     }
     if (event.kind === "move") {
       const amount = movementDistance(event);
-      const count = Math.max(1, Math.ceil(Math.abs(amount) / 20));
       const following = events[index + 1];
       const drawing =
         following?.kind === "draw-segment" ? following : undefined;
-      for (let segment = 1; segment <= count; segment++) {
-        checkActive();
-        await robot.moveCentimeters(amount / count / 10);
-        checkActive();
-        const payload = event.payload as MovePayload;
-        const from = interpolate(payload, (segment - 1) / count);
-        const to = interpolate(payload, segment / count);
-        apply({ ...event, payload: { ...payload, from, to } });
-        if (drawing !== undefined) {
-          apply({
-            ...drawing,
-            payload: { ...(drawing.payload as DrawSegmentPayload), from, to },
-          });
-        }
-        repaint();
-      }
+      checkActive();
+      await robot.moveCentimeters(amount / 10);
+      checkActive();
+      apply(event);
+      if (drawing !== undefined) apply(drawing);
+      repaint();
       if (drawing !== undefined) index++;
     } else {
       if (event.kind === "pen-change") {
@@ -285,6 +278,11 @@ export async function runRobotProgram(
   }
 }
 
+interface RobotTurn {
+  readonly command: "left" | "right";
+  readonly angle: number;
+}
+
 interface RobotMotion {
   readonly kind: "move" | "turn";
   readonly amount: number;
@@ -296,10 +294,32 @@ function motionSegments(motion: RobotMotion): number {
   );
 }
 
-function compensatedTurn(angle: number): readonly RobotMotion[] {
+function compensatedTurn({ command, angle }: RobotTurn): readonly RobotMotion[] {
   if (angle === 0) return [];
   const forwardOffsetMillimeters = 126;
-  const leftOffsetMillimeters = 24;
+  const leftOffsetMillimeters = 26;
+  if (command === "right") {
+    const angleOffset = (angle - 90) / 2;
+    return [
+      {
+        kind: "move",
+        amount: forwardOffsetMillimeters - leftOffsetMillimeters - angleOffset,
+      },
+      { kind: "turn", amount: angle },
+      { kind: "move", amount: -(forwardOffsetMillimeters + leftOffsetMillimeters + angleOffset) },
+    ];
+  }
+  else if (command === "left") {
+    const angleOffset = (angle + 90);
+    return [
+      {
+        kind: "move",
+        amount: forwardOffsetMillimeters + leftOffsetMillimeters + angleOffset,
+      },
+      { kind: "turn", amount: angle },
+      { kind: "move", amount: -(forwardOffsetMillimeters - leftOffsetMillimeters) },
+    ];
+  }
   const radians = ((angle % 360) * Math.PI) / 180;
   const horizontal =
     leftOffsetMillimeters * (Math.cos(radians) - 1) -
@@ -310,12 +330,10 @@ function compensatedTurn(angle: number): readonly RobotMotion[] {
   const distance = Math.hypot(horizontal, vertical);
   if (distance < 1e-8) return [{ kind: "turn", amount: angle }];
   const translationHeading = (Math.atan2(horizontal, vertical) * 180) / Math.PI;
-  const correction = ((translationHeading - (angle % 360) + 540) % 360) - 180;
   return [
-    { kind: "turn", amount: angle },
-    { kind: "turn", amount: correction },
+    { kind: "turn", amount: translationHeading },
     { kind: "move", amount: distance },
-    { kind: "turn", amount: -correction },
+    { kind: "turn", amount: angle - translationHeading },
   ];
 }
 
@@ -334,16 +352,6 @@ function movementDistance(event: TraceEvent): number {
     throw new Error("Robot runs require movement along the turtle heading.");
   }
   return distance;
-}
-
-function interpolate(
-  payload: MovePayload,
-  fraction: number,
-): readonly [number, number] {
-  return [
-    payload.from[0] + (payload.to[0] - payload.from[0]) * fraction,
-    payload.from[1] + (payload.to[1] - payload.from[1]) * fraction,
-  ];
 }
 
 export function createRobotRunController(

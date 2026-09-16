@@ -196,16 +196,18 @@ test("returns no reading for non-numeric sensor responses", async () => {
 
 test("precise movement waits for a robot response and rejects missing acknowledgements", async () => {
   const fake = createTransport();
+  const timeouts = [];
   let acknowledge;
-  fake.transport.evaluate = (expression) => {
+  fake.transport.evaluate = (expression, timeoutMilliseconds) => {
     fake.expressions.push(expression);
+    timeouts.push(timeoutMilliseconds);
     return new Promise((resolve) => {
       acknowledge = resolve;
     });
   };
   const robot = createMBot2ManualRobot(fake.transport);
   let finished = false;
-  const movement = robot.moveCentimeters(-2).then(() => {
+  const movement = robot.moveCentimeters(-40).then(() => {
     finished = true;
   });
   await Promise.resolve();
@@ -213,13 +215,15 @@ test("precise movement waits for a robot response and rejects missing acknowledg
   acknowledge(1);
   await movement;
   assert.equal(finished, true);
-  const turn = robot.turnDegrees(-10);
+  const turn = robot.turnDegrees(-450);
   acknowledge(undefined);
   await assert.rejects(turn, /not acknowledged/);
   assert.deepEqual(fake.expressions, [
-    "(mbot2.straight(-2,speed=30),1)[1]",
-    "(mbot2.turn(-10,speed=30),1)[1]",
+    "(mbot2.straight(-40,speed=30),1)[1]",
+    "(mbot2.turn(-450,speed=30),1)[1]",
   ]);
-  await assert.rejects(robot.moveCentimeters(3), /bounded/);
+  assert.deepEqual(timeouts, [23_000, 48_000]);
+  await assert.rejects(robot.moveCentimeters(1_001), /bounded/);
+  await assert.rejects(robot.turnDegrees(5_001), /bounded/);
   await assert.rejects(robot.turnDegrees(Number.NaN), /bounded/);
 });

@@ -108,7 +108,7 @@ function createBluetoothFake({
     },
     async delay(milliseconds) {
       delays.push(milliseconds);
-      if (milliseconds === 3_000) {
+      if (milliseconds >= 3_000) {
         return new Promise(() => undefined);
       }
     },
@@ -174,14 +174,14 @@ test("connect stops after one service-discovery reconnect", async () => {
   assert.equal(fake.device.connected, false);
 });
 
-test("writes frames in paced 20-byte chunks and routes indexed responses", async () => {
+test("long motion timeouts still allow stop writes and route indexed responses", async () => {
   const fake = createBluetoothFake();
   const transport = await connectMBot2WebBluetooth(fake.requestDevice, {
     delay: fake.delay,
   });
   fake.writes.length = 0;
 
-  const evaluation = transport.evaluate("cyberpi.ultrasonic2.get(1)");
+  const evaluation = transport.evaluate("(mbot2.straight(40,speed=30),1)[1]", 23_000);
   await new Promise((resolve) => setImmediate(resolve));
   await transport.run("mbot2.EM_stop()");
   const responseFrame = buildMBot2ScriptFrame(
@@ -192,6 +192,8 @@ test("writes frames in paced 20-byte chunks and routes indexed responses", async
   fake.emitNotification(responseFrame);
 
   assert.equal(await evaluation, 42);
+  assert.ok(fake.delays.includes(23_000));
+  assert.equal(fake.delays.includes(3_000), false);
   assert.ok(fake.writes.every((chunk) => chunk.length <= 20));
   assert.ok(fake.delays.includes(8));
   const flattenedWrites = fake.writes.flat();
@@ -241,6 +243,9 @@ test("evaluation times out and ignores responses without a pending request", asy
   );
   fake.emitNotification(unrelatedResponse);
   assert.equal(await transport.evaluate("cyberpi.get_battery()"), undefined);
+  assert.ok(fake.delays.includes(1));
+  assert.equal(await transport.evaluate("mbot2.turn(90)", 2_000), undefined);
+  assert.ok(fake.delays.includes(2_000));
 });
 
 test("write failures reject connection and evaluation", async () => {

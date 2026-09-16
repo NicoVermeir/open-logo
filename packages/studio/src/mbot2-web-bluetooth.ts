@@ -59,7 +59,7 @@ export interface MBot2WebBluetoothTransport {
   readonly deviceName: string;
   readonly connected: boolean;
   run(script: string): Promise<void>;
-  evaluate(expression: string): Promise<unknown | undefined>;
+  evaluate(expression: string, timeoutMilliseconds?: number): Promise<unknown | undefined>;
   disconnect(): void;
 }
 
@@ -180,7 +180,7 @@ function createConnectedTransport(
         ),
       );
     },
-    async evaluate(expression) {
+    async evaluate(expression, timeoutMilliseconds = responseTimeoutMilliseconds) {
       const index = nextRequestIndex();
       let resolveResponse!: (value: unknown | undefined) => void;
       const response = new Promise<unknown | undefined>((resolve) => {
@@ -195,7 +195,7 @@ function createConnectedTransport(
         pendingResponses.delete(index);
         throw error;
       }
-      const timeout = delay(responseTimeoutMilliseconds).then(() => undefined);
+      const timeout = delay(timeoutMilliseconds).then(() => undefined);
       const value = await Promise.race([response, timeout]);
       pendingResponses.delete(index);
       return value;

@@ -45,7 +45,7 @@ before relying on the panel; USB and Bluetooth firmware variants may expose diff
 
 Connect and confirm pen calibration through the manual controls, then use **Run on turtlebot** in the run toolbar. Studio
 preflights the entire program before movement and replays its trace on the connected robot.
-The virtual turtle advances after each acknowledged straight segment; a turn updates its heading
+The virtual turtle advances after each acknowledged whole straight move; a turn updates its heading
 after the complete pen-offset maneuver and any pen restoration. Hidden repositioning never draws on
 the canvas. Playback does not use a separate animation timer.
 This is command synchronization, not measured position telemetry; wheel slip is not corrected.
@@ -59,17 +59,25 @@ evaluating an expression twice. Generated names avoid source collisions and keep
 unchanged; wrapper events are hidden from playback. Unsupported commands, profiles, trace effects,
 and invalid arguments are rejected before movement, with the reason shown in the robot panel.
 
-One Logo unit maps to **1 mm**. Motion uses at most 20 mm or 10 degrees per command, with
-`speed=30`, a 500-segment limit (including all offset-compensation motions), and a 5,000-instruction preflight budget (including generated
+One Logo unit maps to **1 mm**. Each straight move and each turn-compensation phase is sent as
+one firmware request at `speed=30`, without Studio pauses every 20 mm or 10 degrees.
+Separate phases and pen settling still pause; this is not continuous blending between Logo commands.
+The unchanged travel budget allows 500 equivalent segments: each move costs its absolute distance
+divided by 20 mm, each turn phase its absolute angle divided by 10 degrees, rounded up per phase
+(ordinary zero-distance moves cost one). All offset-compensation motions count. There is also a
+5,000-instruction preflight budget (including generated
 wrapper instructions). Each turn wrapper also uses one procedure stack frame. The firmware must support
 `mbot2.straight(distance, speed=30)` and `mbot2.turn(angle, speed=30)` and return only after motion
-completes. These firmware assumptions and physical timing have not yet been hardware-validated.
+completes. Motion acknowledgment windows allow 3 seconds plus 1 second per equivalent segment;
+other requests retain their default 3-second timeout. This allowance is not measured travel time.
+These firmware assumptions and physical timing have not yet been hardware-validated.
 Test short programs on a clear floor with the robot's power switch within reach.
 
 Each run treats the current **pen-tip position** as the virtual origin and the chassis heading as
 heading zero; it does not home the robot. Appearance commands affect only the canvas; pen commands
 also drive the physical servo. Stop cancels subsequent
-segments and requests motor stop; Bluetooth/firmware delays mean this is not an instantaneous
+phases and requests motor stop, even while a movement response is pending. Firmware may finish the
+current whole move before handling Stop; Bluetooth/firmware delays mean this is not an instantaneous
 safety stop. Reset also clears the virtual run but does not return the physical robot to its start.
 Disconnects or missing acknowledgements abort the run. Manual movement and virtual Run/Step
 cannot overlap a physical program; canvas input is disabled during physical playback.
@@ -103,15 +111,24 @@ hardware safety interlock. Firmware timing and mechanical calibration require ha
 
 ### Pen mounting offset
 
-Studio assumes the pen tip is **126 mm forward and 24 mm left** of the chassis rotation center.
-For each nonzero turn it lifts the pen, executes the full requested rotation, turns toward the
-required chassis displacement, translates, then restores the requested heading. The displacement
-is the difference between the pen's old and new offset vectors, so the lowered tip returns to the
-same Logo vertex. Full rotations still execute; zero turns require no hardware command.
+Studio assumes the pen tip is **126 mm forward and 26 mm left** of the chassis rotation center.
+For every nonzero `right` command the current calibration lifts the pen, moves **105 mm forward**
+(`126 - (26 - 5)`), executes the requested signed angle, then moves **138 mm backward**
+(`126 + (26 - 14)`). This applies to
+evaluated expressions, negative angles, and full rotations without normalizing away complete turns.
+It is a requested physical maneuver, not vertex-preserving compensation under this mounting model:
+at `right 90`, the modeled tip ends 14 mm right and 5 mm forward of its starting vertex.
+
+`left` commands retain the geometric compensation: lift, steer toward the required chassis
+displacement, translate, then finish at the requested heading. The displacement is the difference
+between the old and new pen-offset vectors, returning the modeled tip to the same Logo vertex.
+This remains the `left` behavior even with a negative argument. Zero turns require no hardware
+command. After either maneuver, the pen is restored only when the latest executed pen command was
+`pen_down`; the virtual turtle receives only the original Logo turn.
 There is no sideways-drive command or continuous rotation about a stationary pen tip.
 
 Keep the surrounding area clear: the lifted tip and chassis move outside the drawn path during
-these maneuvers, and compensation uses additional battery and time. The geometry is verified in
+these maneuvers, and compensation uses additional battery and time. The motion sequences are verified in
 simulation and mocked Bluetooth tests, not on the physical mechanism. Wheel slip, firmware motion
 accuracy, and any horizontal shift caused by lifting the linkage remain unmeasured.
 

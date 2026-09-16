@@ -134,8 +134,8 @@ export function createMBot2ManualRobot(
     turnRight: (speed, durationSeconds) =>
       move("turn_right", speed, durationSeconds),
     moveCentimeters: (distance) =>
-      acknowledgedMotion(transport, "straight", distance, 2),
-    turnDegrees: (angle) => acknowledgedMotion(transport, "turn", angle, 10),
+      acknowledgedMotion(transport, "straight", distance, 1_000),
+    turnDegrees: (angle) => acknowledgedMotion(transport, "turn", angle, 5_000),
     setPenAngle,
     setPenDown: async (down, settings) =>
       setPenAngle(robotPenAngle(down, settings), settings.settleMilliseconds),
@@ -157,6 +157,7 @@ async function acknowledgedMotion(
   }
   const response = await transport.evaluate(
     `(mbot2.${command}(${amount},speed=30),1)[1]`,
+    3_000 + Math.ceil(Math.abs(amount) / (command === "straight" ? 2 : 10)) * 1_000,
   );
   if (response !== 1) {
     throw new Error(
