@@ -294,10 +294,7 @@ function motionSegments(motion: RobotMotion): number {
   );
 }
 
-function compensatedTurn({
-  command,
-  angle,
-}: RobotTurn): readonly RobotMotion[] {
+function compensatedTurn({ angle }: RobotTurn): readonly RobotMotion[] {
   if (angle === 0) return [];
   if (Math.abs(angle) === 360) {
     const fullTurnCorrectionDegrees = 7;
@@ -318,43 +315,25 @@ function compensatedTurn({
   }
   const forwardOffsetMillimeters = 126;
   const leftOffsetMillimeters = 26;
-  if (command === "right" && Math.abs(angle) !== 180) {
-    const angleOffset = angle - 90;
+  const radians = ((angle % 360) * Math.PI) / 180;
+  const lateralCompensationMillimeters =
+    leftOffsetMillimeters * Math.tan(radians / 2);
+  if (Math.abs(lateralCompensationMillimeters) <= forwardOffsetMillimeters) {
+    const hardwareTurnDegrees =
+      Math.abs(angle) === 90 ? angle + Math.sign(angle) : angle;
     return [
       {
         kind: "move",
-        amount: forwardOffsetMillimeters - leftOffsetMillimeters - angleOffset,
+        amount: forwardOffsetMillimeters - lateralCompensationMillimeters,
       },
-      { kind: "turn", amount: angle },
+      { kind: "turn", amount: hardwareTurnDegrees },
       {
         kind: "move",
-        amount: -(
-          forwardOffsetMillimeters +
-          leftOffsetMillimeters +
-          angleOffset
-        ),
-      },
-    ];
-  } else if (command === "left" && Math.abs(angle) !== 180) {
-    const angleOffset = (angle + 90) / 2;
-    return [
-      {
-        kind: "move",
-        amount: forwardOffsetMillimeters + leftOffsetMillimeters - angleOffset,
-      },
-      { kind: "turn", amount: angle },
-      {
-        kind: "move",
-        amount: -(
-          forwardOffsetMillimeters -
-          leftOffsetMillimeters +
-          angleOffset
-        ),
+        amount: -(forwardOffsetMillimeters + lateralCompensationMillimeters),
       },
     ];
   }
   const clockwiseHalfTurnLeftCorrectionMillimeters = angle === 180 ? 13.3 : 0;
-  const radians = ((angle % 360) * Math.PI) / 180;
   const horizontal =
     leftOffsetMillimeters * (Math.cos(radians) - 1) -
     forwardOffsetMillimeters * Math.sin(radians) -
@@ -363,7 +342,6 @@ function compensatedTurn({
     forwardOffsetMillimeters * (1 - Math.cos(radians)) -
     leftOffsetMillimeters * Math.sin(radians);
   const distance = Math.hypot(horizontal, vertical);
-  if (distance < 1e-8) return [{ kind: "turn", amount: angle }];
   const translationHeading = (Math.atan2(horizontal, vertical) * 180) / Math.PI;
   return [
     { kind: "turn", amount: translationHeading },

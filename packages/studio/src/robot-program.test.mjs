@@ -25,6 +25,152 @@ function confirmPen(controls) {
   controls.confirmPenSettings();
 }
 
+function simulateQuarterTurnUndertravel(commandedDegrees) {
+  if ([90, 91].includes(Math.abs(commandedDegrees))) {
+    return commandedDegrees - Math.sign(commandedDegrees);
+  }
+  return commandedDegrees;
+}
+
+test("polygon corners keep the offset pen on every virtual vertex", async () => {
+  for (const sideCount of [3, 4]) {
+    for (const command of ["right", "left"]) {
+      for (const sign of [1, -1]) {
+        for (const initialHeading of [0, 37, 211]) {
+          const angle = (sign * 360) / sideCount;
+          const state = createStudioState();
+          state.setSource(
+            `pen_down\nrepeat ${sideCount} [ forward 60 ${command} ${angle} ]`,
+          );
+          const initialRadians = (initialHeading * Math.PI) / 180;
+          let centerX =
+            26 * Math.cos(initialRadians) - 126 * Math.sin(initialRadians);
+          let centerY =
+            -126 * Math.cos(initialRadians) - 26 * Math.sin(initialRadians);
+          let heading = initialHeading;
+          let penDown = false;
+          const drawn = [];
+          const penTip = () => {
+            const radians = (heading * Math.PI) / 180;
+            return [
+              centerX + 126 * Math.sin(radians) - 26 * Math.cos(radians),
+              centerY + 126 * Math.cos(radians) + 26 * Math.sin(radians),
+            ];
+          };
+          await runRobotProgram(
+            {
+              connected: true,
+              setPenDown: async (down) => {
+                penDown = down;
+              },
+              moveCentimeters: async (amount) => {
+                const from = penTip();
+                const radians = (heading * Math.PI) / 180;
+                centerX += amount * 10 * Math.sin(radians);
+                centerY += amount * 10 * Math.cos(radians);
+                if (penDown) drawn.push({ from, to: penTip() });
+              },
+              turnDegrees: async (amount) => {
+                assert.equal(penDown, false);
+                heading += simulateQuarterTurnUndertravel(amount);
+              },
+            },
+            { state, repaint() {}, cancelled: () => false },
+          );
+          const virtualLines = state.getState().turtleScene.items;
+          assert.equal(drawn.length, sideCount);
+          assert.equal(virtualLines.length, sideCount);
+          for (const [index, line] of drawn.entries()) {
+            for (const endpoint of ["from", "to"]) {
+              const [virtualX, virtualY] =
+                virtualLines[index].segment[endpoint];
+              const expectedX =
+                virtualX * Math.cos(initialRadians) +
+                virtualY * Math.sin(initialRadians);
+              const expectedY =
+                virtualY * Math.cos(initialRadians) -
+                virtualX * Math.sin(initialRadians);
+              const error = Math.hypot(
+                line[endpoint][0] - expectedX,
+                line[endpoint][1] - expectedY,
+              );
+              assert.ok(
+                error < 1e-8,
+                `${command} ${angle}, side ${index + 1} ${endpoint}: ${error} mm error`,
+              );
+            }
+          }
+          assert.ok(Math.hypot(...penTip()) < 1e-8);
+          assert.equal(
+            heading,
+            initialHeading + sign * 360 * (command === "left" ? -1 : 1),
+          );
+        }
+      }
+    }
+  }
+});
+
+test("90-degree turns compensate one degree of hardware underturn without changing geometry", async () => {
+  for (const [source, direction] of [
+    ["right 90", 1],
+    ["left 90", -1],
+    ["right -90", -1],
+    ["left -90", 1],
+    ["right 360 / 4", 1],
+    ["left 360 / 4", -1],
+  ]) {
+    for (const penCommand of ["pen_down", "pen_up"]) {
+      const expectedPenDown = penCommand === "pen_down";
+      const state = createStudioState({
+        source: `${penCommand}\nforward 40\n${source}\nforward 40`,
+      });
+      const calls = [];
+      let penDown = false;
+      await executeRobotProgram(
+        {
+          connected: true,
+          async setPenDown(down) {
+            penDown = down;
+            calls.push(["pen", down]);
+          },
+          async moveCentimeters(distance) {
+            calls.push(["move", distance, penDown]);
+          },
+          async turnDegrees(angle) {
+            assert.equal(penDown, false);
+            calls.push(["turn", angle]);
+          },
+        },
+        { state, penSettings, repaint() {}, cancelled: () => false },
+      );
+      assert.deepEqual(
+        calls,
+        [
+          ["pen", expectedPenDown],
+          ["move", 4, expectedPenDown],
+          ["pen", false],
+          ["move", direction > 0 ? 10 : 15.2, false],
+          ["turn", direction * 91],
+          ["move", direction > 0 ? -15.2 : -10, false],
+          ...(expectedPenDown ? [["pen", true]] : []),
+          ["move", 4, expectedPenDown],
+        ],
+        source,
+      );
+      const snapshot = state.getState();
+      assert.ok(
+        Math.abs(snapshot.turtleState.position[0] - direction * 40) < 1e-8,
+      );
+      assert.ok(Math.abs(snapshot.turtleState.position[1] - 40) < 1e-8);
+      assert.equal(snapshot.turtleState.heading, direction > 0 ? 90 : 270);
+      assert.equal(snapshot.turtleState.penDown, expectedPenDown);
+      assert.equal(snapshot.turtleScene.items.length, expectedPenDown ? 2 : 0);
+      assert.equal(penDown, expectedPenDown);
+    }
+  }
+});
+
 test("180-degree turns apply clockwise lateral calibration without changing signed heading", async () => {
   for (const [source, signedAngle, leftCorrectionMillimeters] of [
     ["right 180", 180, 13.3],
@@ -214,7 +360,7 @@ test("450-degree turns combine calibrated full and quarter turns while preservin
         ["pen", false],
         ["turn", direction * 367],
         ["move", direction > 0 ? 10 : 15.2, false],
-        ["turn", direction * 90],
+        ["turn", direction * 91],
         ["move", direction > 0 ? -15.2 : -10, false],
         ...(expectedPenDown ? [["pen", true]] : []),
         ["move", 4, expectedPenDown],
@@ -234,7 +380,10 @@ test("450-degree turns combine calibrated full and quarter turns while preservin
 
 test("left offset compensation returns the pen tip to the Logo vertex without drawing repositioning", async () => {
   for (const initialHeading of [0, 37, 211]) {
-    for (const angle of [90, -90, 180, -270, 450, -450, 360, -360, 0, 20]) {
+    for (const angle of [
+      90, -90, 120, -120, -180, 179.999, -179.999, 181, -181, -270, 540, -540,
+      720, -720, 0, 20,
+    ]) {
       const state = createStudioState({
         source: `left ${-initialHeading}\npen_down\nforward 19\nleft ${-angle}\nforward 19`,
       });
@@ -266,7 +415,7 @@ test("left offset compensation returns the pen tip to the Logo vertex without dr
           async turnDegrees(amount) {
             assert.ok(Math.abs(amount) <= 5_000);
             assert.equal(down, false);
-            heading += amount;
+            heading += simulateQuarterTurnUndertravel(amount);
           },
         },
         { state, penSettings, repaint() {}, cancelled: () => false },
@@ -434,8 +583,8 @@ test("compensation and zero-distance commands count toward preflight before any 
 test("450-degree plans include calibration and translations in the 500-segment budget", async () => {
   for (const turnCommand of ["right", "left"]) {
     for (const [distance, exceedsBudget] of [
-      [560, false],
-      [580, true],
+      [400, false],
+      [420, true],
     ]) {
       let commands = 0;
       const command = async () => {
@@ -548,8 +697,16 @@ test("uncalibrated physical runs never send a command", async () => {
   );
 });
 
-test("right commands advance 105 mm, turn the evaluated angle, then reverse 138 mm without chunking", async () => {
-  for (const angle of [20, 90, -90, 180, -270, 450, -450, 360, -360, 0]) {
+test("ordinary right commands reposition around the evaluated angle without chunking", async () => {
+  for (const [angle, advance, retreat, hardwareTurnDegrees] of [
+    [20, 12.14154985, -13.05845015, 20],
+    [90, 10, -15.2, 91],
+    [-90, 15.2, -10, -91],
+    [120, 8.0966679, -17.1033321, 120],
+    [-120, 17.1033321, -8.0966679, -120],
+    [-270, 10, -15.2, -270],
+    [0, 0, 0, 0],
+  ]) {
     const state = createStudioState({ source: `right ${angle}` });
     const calls = [];
     await runRobotProgram(
@@ -567,17 +724,18 @@ test("right commands advance 105 mm, turn the evaluated angle, then reverse 138 
       },
       { state, repaint() {}, cancelled: () => false },
     );
-    assert.deepEqual(
-      calls,
-      angle === 0
-        ? []
-        : [
-            ["pen", false],
-            ["move", 10.5],
-            ["turn", angle],
-            ["move", -13.8],
-          ],
-    );
+    if (angle === 0) {
+      assert.deepEqual(calls, []);
+    } else {
+      assert.deepEqual(
+        calls.map(([kind]) => kind),
+        ["pen", "move", "turn", "move"],
+      );
+      assert.deepEqual(calls[0], ["pen", false]);
+      assert.ok(Math.abs(calls[1][1] - advance) < 1e-8);
+      assert.deepEqual(calls[2], ["turn", hardwareTurnDegrees]);
+      assert.ok(Math.abs(calls[3][1] - retreat) < 1e-8);
+    }
     assert.deepEqual(state.getState().turtleState.position, [0, 0]);
     assert.equal(
       state.getState().turtleState.heading,
@@ -587,12 +745,14 @@ test("right commands advance 105 mm, turn the evaluated angle, then reverse 138 
   }
 });
 
-test("left turns steer directly into offset translation and finish at the requested heading", async () => {
-  for (const [source, angle, displacement] of [
-    ["left -90", 90, [-152, 100]],
-    ["left 90", -90, [100, 152]],
-  ]) {
-    const state = createStudioState({ source });
+test("near-half turns use bounded direct translation and finish at the requested heading", async () => {
+  for (const angle of [170, -170, 179.999, -179.999]) {
+    const state = createStudioState({ source: `left ${-angle}` });
+    const radians = (angle * Math.PI) / 180;
+    const displacement = [
+      -26 - (126 * Math.sin(radians) - 26 * Math.cos(radians)),
+      126 - (126 * Math.cos(radians) + 26 * Math.sin(radians)),
+    ];
     const calls = [];
     await runRobotProgram(
       {
@@ -616,6 +776,8 @@ test("left turns steer directly into offset translation and finish at the reques
       assert.ok(Math.abs(amount - steeringAngle) < 1e-8);
     }
     const translation = calls.slice(firstMove, lastMove + 1);
+    assert.equal(translation.length, 1);
+    assert.ok(Math.abs(translation[0][1]) < 26);
     assert.ok(translation.every(([kind]) => kind === "move"));
     assert.ok(
       Math.abs(
@@ -668,12 +830,14 @@ test("robot acknowledgements gate whole virtual movements and subsequent command
     await new Promise((resolve) => setImmediate(resolve));
   }
   await run;
-  assert.deepEqual(calls.slice(0, 4), [
-    ["move", 4],
-    ["move", 10.5],
-    ["turn", 20],
-    ["move", -13.8],
-  ]);
+  assert.deepEqual(
+    calls.slice(0, 4).map(([kind]) => kind),
+    ["move", "move", "turn", "move"],
+  );
+  assert.deepEqual(calls[0], ["move", 4]);
+  assert.ok(Math.abs(calls[1][1] - 12.14154985) < 1e-8);
+  assert.deepEqual(calls[2], ["turn", 20]);
+  assert.ok(Math.abs(calls[3][1] + 13.05845015) < 1e-8);
   assert.equal(calls.length, 5);
   assert.equal(calls.at(-1)[0], "move");
   assert.ok(Math.abs(calls.at(-1)[1] + 1) < 1e-10);
@@ -749,7 +913,7 @@ test("calculated turns retain direction and complete rotations inside loops", as
     },
     { state, repaint() {}, cancelled: () => false },
   );
-  assert.deepEqual(angles, [367, 90, -270, 367, 90, -270]);
+  assert.deepEqual(angles, [367, 91, -270, 367, 91, -270]);
   assert.equal(state.getState().turtleState.heading, 0);
 });
 
@@ -800,7 +964,7 @@ left -20`);
     },
     { state, repaint() {}, cancelled: () => false },
   );
-  assert.deepEqual(angles, [-367, -90, 90, 20]);
+  assert.deepEqual(angles, [-367, -91, 91, 20]);
   assert.equal(state.getState().turtleState.heading, 20);
   const lastInstruction = spans.findIndex((span) => span.start[0] === 5);
   assert.equal(lastInstruction, 3);
@@ -941,8 +1105,11 @@ test("procedures, distance expressions, and virtual pen settings use the same tr
     ["move", 2],
     ["pen", false, penSettings],
   ]);
-  assert.equal(calls[3][0], "turn");
-  assert.ok(calls[3][1] > 0);
+  assert.equal(calls[3][0], "move");
+  assert.ok(Math.abs(calls[3][1] - 13.05845015) < 1e-8);
+  assert.deepEqual(calls[4], ["turn", -20]);
+  assert.equal(calls[5][0], "move");
+  assert.ok(Math.abs(calls[5][1] + 12.14154985) < 1e-8);
   assert.deepEqual(calls.at(-2), ["pen", true, penSettings]);
   assert.equal(calls.at(-1)[0], "move");
   assert.ok(Math.abs(calls.at(-1)[1] + 1) < 1e-10);
