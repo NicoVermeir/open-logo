@@ -28,6 +28,39 @@ the current Azure CLI tenant is not the Foundry tenant. Generated source is plac
 but is never executed automatically. The proxy is a development-server integration; production
 deployments need the same `/api/recognize-board` contract hosted by their backend.
 
+## Local realtime voice tutor
+
+The floating **Talk to your tutor** panel connects the browser microphone and remote audio through
+WebRTC. Studio keeps the provider adapter headless and sends only structured lesson/program
+grounding; tool calls can read progress, run the unchanged program, request the deterministic
+`@openlogo/edu` hint ladder, load curriculum lessons, or select a line. Voice tools never edit source.
+
+For local development:
+
+1. Use Node 22 and run `npm ci` from the repository root when dependencies are not already restored.
+2. Run `az login` as a user with access to the Foundry/Azure AI Services resource.
+3. Copy `.env.example` to `.env.local` and set:
+   `OPENLOGO_REALTIME_RESOURCE`, `OPENLOGO_REALTIME_DEPLOYMENT`, and
+   `OPENLOGO_REALTIME_VOICE`. Never put an Azure/OpenAI key or token in this file.
+4. Run `npm run dev --workspace @openlogo/studio`, open the shown localhost URL, and select
+   **Talk to your tutor**. The browser asks for microphone permission.
+
+The Vite-only `POST /api/realtime-token` middleware uses the local Azure CLI Entra context with
+scope `https://ai.azure.com/.default`, calls the GA
+`/openai/v1/realtime/client_secrets` endpoint, and returns only the short-lived client secret plus
+its expiry and WebRTC call metadata. Standard credentials never enter browser code. This middleware
+exists only during Vite development; any production host needs an equivalent authenticated backend
+route.
+
+Targeted checks:
+
+```text
+npm run build --workspace @openlogo/edu
+npm run build --workspace @openlogo/studio
+node --test packages/studio/src/realtime-voice-session.test.mjs packages/studio/src/voice-tutor-controller.test.mjs packages/studio/index.test.mjs
+npm run build:web --workspace @openlogo/studio
+```
+
 ## mBot2 manual controls
 
 The collapsible **mBot2 manual controls** below the turtle canvas provide a hardware test surface
@@ -1334,5 +1367,4 @@ A path-scoped, required **`studio-visual`** job in [`.github/workflows/ci.yml`](
 runs this suite inside the matching Playwright container. A `dorny/paths-filter` step in the `meta`
 job gates it so it only runs when the studio (or a package it composes) changes, keeping unrelated
 PRs fast.
-
 

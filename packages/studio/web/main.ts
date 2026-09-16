@@ -66,6 +66,7 @@ import {
   createParserHighlighter,
   createRobotControlPanelController,
   createRobotRunController,
+  createRealtimeVoiceSession,
   createRunController,
   createRunLogController,
   createRunToggleActionHandlers,
@@ -73,6 +74,7 @@ import {
   createTimeoutScheduler,
   createTurtleStateRegion,
   createTutorOutputController,
+  createVoiceTutorController,
   createWorkerExecutionHost,
   decideExternalSync,
   DEFAULT_RUN_PROGRAM,
@@ -116,6 +118,9 @@ import type {
   WorkedExampleViewItem,
   RunStatus,
   RobotControlPanelView,
+  RealtimeMediaStream,
+  RealtimePeerConnection,
+  VoiceTutorControllerView,
 } from "../src/index.js";
 import { createMBot2BrowserConnector } from "./mbot2-browser.js";
 import {
@@ -209,6 +214,29 @@ const tutorOutputPaneElement = assertPresent<HTMLElement>(
 const tutorOutputElement = assertPresent<HTMLElement>(
   document.getElementById("tutor-output"),
   "tutor-output",
+);
+const voiceTutorToggleButton = assertPresent(
+  document.getElementById("voice-tutor-toggle"),
+  "voice-tutor-toggle",
+  (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const voiceTutorMuteButton = assertPresent(
+  document.getElementById("voice-tutor-mute"),
+  "voice-tutor-mute",
+  (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const voiceTutorStatusElement = assertPresent<HTMLElement>(
+  document.getElementById("voice-tutor-status"),
+  "voice-tutor-status",
+);
+const voiceTutorTranscriptElement = assertPresent<HTMLOListElement>(
+  document.getElementById("voice-tutor-transcript"),
+  "voice-tutor-transcript",
+);
+const voiceTutorAudioElement = assertPresent(
+  document.getElementById("voice-tutor-audio"),
+  "voice-tutor-audio",
+  (value): value is HTMLAudioElement => value instanceof HTMLAudioElement,
 );
 const turtleStateElement = assertPresent<HTMLElement>(
   document.getElementById("turtle-state"),
@@ -869,6 +897,32 @@ runOnRobotButton.addEventListener(
   () => void runController.runOnRobot(),
 );
 mountRunController(shell, runController);
+const voiceTutorSession = createRealtimeVoiceSession({
+  fetch: (input, init) => fetch(input, init),
+  createPeerConnection: () =>
+    new RTCPeerConnection() as unknown as RealtimePeerConnection,
+  getUserMedia: async () =>
+    (await navigator.mediaDevices.getUserMedia({
+      audio: true,
+    })) as unknown as RealtimeMediaStream,
+  audioSink: {
+    setStream: (stream) => {
+      voiceTutorAudioElement.srcObject =
+        stream as unknown as MediaStream | null;
+    },
+  },
+});
+const voiceTutor = createVoiceTutorController({
+  state,
+  session: voiceTutorSession,
+  runController,
+});
+voiceTutorToggleButton.addEventListener("click", () => {
+  void voiceTutor.toggleEnabled();
+});
+voiceTutorMuteButton.addEventListener("click", () => {
+  void voiceTutor.toggleMuted();
+});
 /**
  * #952 — the studio's keyboard and pointer input, so `on_key` and `on_click` actually fire. Every
  * decision (key-word normalization, which keys have their browser default suppressed, and why the
@@ -1135,6 +1189,21 @@ function renderLessonPane(element: HTMLElement, view: LessonPaneView): void {
   );
 }
 
+function renderVoiceTutor(view: VoiceTutorControllerView): void {
+  voiceTutorToggleButton.ariaPressed = String(view.enabled);
+  voiceTutorMuteButton.ariaPressed = String(view.muted);
+  voiceTutorMuteButton.disabled = !view.enabled;
+  voiceTutorMuteButton.textContent = view.muted ? "Unmute" : "Mute";
+  voiceTutorStatusElement.textContent = view.statusText;
+  voiceTutorTranscriptElement.replaceChildren(
+    ...view.transcript.map((entry) => {
+      const item = document.createElement("li");
+      item.textContent = entry.label;
+      return item;
+    }),
+  );
+}
+
 /** #317 — tracks the diagnostics list last synced into CM6's {@link diagnosticsField}, so the
  * `state.subscribe` callback below only dispatches a fresh {@link setDiagnosticsEffect} when the
  * store's `diagnostics` reference actually changed — mirroring `needsExternalSync`'s guard against
@@ -1189,6 +1258,7 @@ tutorOutput.subscribeEntries(() => {
     tutorOutput.getEntries(),
   );
 });
+voiceTutor.subscribe(renderVoiceTutor);
 runStatusElement.textContent = mapRunStatusToLabel(state.getState().runStatus);
 renderRunToggleButton(state.getState().runStatus);
 outputElement.textContent = formatOutput(state.getState().output);
@@ -1211,3 +1281,4 @@ speedDescriptionElement.textContent = describeSpeedTickDelayMs(
   mapSpeedSliderValueToTickDelayMs(state.getState().speedSliderValue),
 );
 renderLessonPane(lessonPaneElement, lessonPane.getView());
+renderVoiceTutor(voiceTutor.getView());

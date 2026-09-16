@@ -31,6 +31,19 @@ Consumers that load lesson content from an untyped source (e.g. JSON) can valida
 exported `isLesson`/`isWorkedExample`/`isLearnerLevel` type guards. Do not invent a competing
 lesson-content shape elsewhere in the codebase — extend this contract instead.
 
+## Provider-neutral voice tutor contract
+
+`src/tutor/voice-session.ts` defines `VoiceTutorSession`, the transport-neutral seam used by hosts
+that add conversational audio. It exposes connection lifecycle, grounding updates, transcripts,
+tool calls, and errors without importing WebRTC, browser APIs, or a specific AI provider.
+
+`buildTutorBrief()` creates the bounded context sent through that seam: learner level, optional
+lesson objective/examples/exercise, current source, diagnostics without developer debug state,
+caller-selected recent trace events, and the prior deterministic hint stage. Its fixed instructions
+enforce Socratic questions, progressive hints, prompt-injection resistance, child privacy, and the
+no-complete-solution rule. Provider authentication, audio transport, tool execution, and UI belong
+to the host package; deterministic `explain`/`why`/`hint`/`debug` remain available without AI.
+
 ## Curriculum content: Level 1 through Level 5
 
 `src/lessons/` holds the first authored curriculum content, built on top of the read-only

@@ -676,3 +676,25 @@ export type {
 export { createRobotControlPanelController } from "./robot-control-panel.js";
 export { runRobotProgram, createRobotRunController } from "./robot-program.js";
 export type { RobotProgramOptions } from "./robot-program.js";
+
+export type {
+  RealtimeAudioSink,
+  RealtimeDataChannel,
+  RealtimeFetch,
+  RealtimeFetchResponse,
+  RealtimeMediaStream,
+  RealtimeMediaTrack,
+  RealtimePeerConnection,
+  RealtimeSessionDescription,
+  RealtimeVoiceSessionOptions,
+} from "./realtime-voice-session.js";
+export { createRealtimeVoiceSession } from "./realtime-voice-session.js";
+
+export type {
+  VoiceTutorController,
+  VoiceTutorControllerOptions,
+  VoiceTutorControllerStatus,
+  VoiceTutorControllerView,
+  VoiceTutorTranscriptEntry,
+} from "./voice-tutor-controller.js";
+export { createVoiceTutorController } from "./voice-tutor-controller.js";

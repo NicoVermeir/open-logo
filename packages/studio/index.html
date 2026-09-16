@@ -410,6 +410,43 @@
         ></ul>
       </section>
     </main>
+    <aside
+      id="voice-tutor"
+      class="voice-tutor"
+      aria-label="Realtime voice tutor"
+    >
+      <div class="voice-tutor-controls">
+        <button
+          id="voice-tutor-toggle"
+          type="button"
+          aria-pressed="false"
+          aria-describedby="voice-tutor-status"
+        >
+          Talk to your tutor
+        </button>
+        <button
+          id="voice-tutor-mute"
+          type="button"
+          aria-pressed="false"
+          aria-label="Mute microphone"
+          disabled
+        >
+          Mute
+        </button>
+      </div>
+      <p id="voice-tutor-status" role="status" aria-live="polite">
+        Voice tutor is off.
+      </p>
+      <ol
+        id="voice-tutor-transcript"
+        class="voice-tutor-transcript"
+        role="log"
+        aria-label="Voice tutor transcript"
+        aria-live="polite"
+        tabindex="0"
+      ></ol>
+      <audio id="voice-tutor-audio" autoplay></audio>
+    </aside>
     <!--
       #769 — the learner-facing prompt for the blocking `input` reporter, wired to
       `@openlogo/runtime`'s host reader seam (#681) through `src/input-prompt.ts`. A native dialog

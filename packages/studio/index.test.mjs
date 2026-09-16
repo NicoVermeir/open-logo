@@ -394,6 +394,38 @@ test("web/main.ts imports the branding stylesheet", () => {
   assert.match(mainTs, /import\s+"\.\/styles\.css"/);
 });
 
+test("index.html and web/main.ts wire an accessible, non-displacing realtime voice tutor surface", () => {
+  assert.match(
+    indexHtml,
+    /id="voice-tutor"[\s\S]*?aria-label="Realtime voice tutor"/,
+  );
+  assert.match(
+    indexHtml,
+    /id="voice-tutor-toggle"[\s\S]*?aria-pressed="false"[\s\S]*?>[\s\S]*?Talk to your tutor/,
+  );
+  assert.match(
+    indexHtml,
+    /id="voice-tutor-mute"[\s\S]*?aria-label="Mute microphone"[\s\S]*?disabled/,
+  );
+  assert.match(
+    indexHtml,
+    /id="voice-tutor-status"[\s\S]*?role="status"[\s\S]*?aria-live="polite"/,
+  );
+  assert.match(
+    indexHtml,
+    /id="voice-tutor-transcript"[\s\S]*?role="log"[\s\S]*?aria-live="polite"[\s\S]*?tabindex="0"/,
+  );
+  assert.ok(
+    indexHtml.indexOf('id="voice-tutor"') > indexHtml.indexOf("</main>"),
+    "voice tutor must remain outside the main grid so it does not displace editor/canvas panes",
+  );
+  assert.match(mainTs, /createRealtimeVoiceSession\(\{/);
+  assert.match(mainTs, /navigator\.mediaDevices\.getUserMedia/);
+  assert.match(mainTs, /createVoiceTutorController\(\{/);
+  assert.match(mainTs, /voiceTutor\.setEnabled/);
+  assert.match(mainTs, /voiceTutor\.setMuted/);
+});
+
 test("web/main.ts asserts every DOM element lookup via the tested assertPresent helper, not a manual if/throw", () => {
   assert.match(mainTs, /assertPresent[<(]/);
   assert.doesNotMatch(
