@@ -401,7 +401,11 @@ test("index.html and web/main.ts wire an accessible, non-displacing realtime voi
   );
   assert.match(
     indexHtml,
-    /id="voice-tutor-toggle"[\s\S]*?aria-pressed="false"[\s\S]*?>[\s\S]*?Talk to your tutor/,
+    /id="voice-tutor-mode"[\s\S]*?value="conversation" selected[\s\S]*?value="push-to-talk"/,
+  );
+  assert.match(
+    indexHtml,
+    /id="voice-tutor-toggle"[\s\S]*?aria-pressed="false"[\s\S]*?>[\s\S]*?Start conversation/,
   );
   assert.match(
     indexHtml,
@@ -415,6 +419,23 @@ test("index.html and web/main.ts wire an accessible, non-displacing realtime voi
     indexHtml,
     /id="voice-tutor-transcript"[\s\S]*?role="log"[\s\S]*?aria-live="polite"[\s\S]*?tabindex="0"/,
   );
+  assert.match(
+    indexHtml,
+    /class="voice-tutor-avatar"[\s\S]*?src="\/openlogo\.png"/,
+  );
+  assert.match(
+    indexHtml,
+    /id="voice-tutor-launcher"[\s\S]*?aria-controls="voice-tutor"[\s\S]*?aria-expanded="false"[\s\S]*?src="\/openlogo\.png"/,
+  );
+  assert.match(
+    mainTs,
+    /voiceTutorStatusElement\.dataset\.status = view\.status/,
+  );
+  assert.match(
+    mainTs,
+    /voice-tutor-message voice-tutor-message--\$\{entry\.speaker\}/,
+  );
+  assert.match(mainTs, /!entry\.final[\s\S]*?voice-tutor-message--live/);
   assert.ok(
     indexHtml.indexOf('id="voice-tutor"') > indexHtml.indexOf("</main>"),
     "voice tutor must remain outside the main grid so it does not displace editor/canvas panes",
@@ -422,8 +443,45 @@ test("index.html and web/main.ts wire an accessible, non-displacing realtime voi
   assert.match(mainTs, /createRealtimeVoiceSession\(\{/);
   assert.match(mainTs, /navigator\.mediaDevices\.getUserMedia/);
   assert.match(mainTs, /createVoiceTutorController\(\{/);
-  assert.match(mainTs, /voiceTutor\.setEnabled/);
-  assert.match(mainTs, /voiceTutor\.setMuted/);
+  assert.match(mainTs, /voiceTutor\.startListening/);
+  assert.match(mainTs, /voiceTutor\.finishListening/);
+  assert.match(mainTs, /voiceTutor\.cancelTurn/);
+  assert.match(mainTs, /voiceTutor\.stopTutor/);
+  assert.match(indexHtml, /id="voice-tutor-more"[\s\S]*?Tell me more/);
+  assert.match(indexHtml, /id="voice-tutor-repeat"[\s\S]*?Say that again/);
+  assert.match(
+    indexHtml,
+    /id="voice-tutor-next-hint"[\s\S]*?Give another hint/,
+  );
+  assert.match(mainTs, /voiceTutor\.tellMeMore/);
+  assert.match(mainTs, /voiceTutor\.sayThatAgain/);
+  assert.match(mainTs, /voiceTutor\.giveAnotherHint/);
+  assert.match(mainTs, /voiceTutor\.setInteractionMode/);
+  assert.match(mainTs, /scheduleGroundingUpdate/);
+  assert.match(indexHtml, /id="lesson-pane-size"[\s\S]*?value="20"/);
+  assert.match(indexHtml, /id="editor-pane-size"[\s\S]*?value="48"/);
+  assert.match(indexHtml, /id="turtle-pane-size"[\s\S]*?value="42"/);
+  assert.match(mainTs, /createPaneLayoutController\(window\.localStorage\)/);
+  assert.match(mainTs, /paneLayout\.setShare\("lesson"/);
+  assert.match(mainTs, /paneLayout\.setShare\("editor"/);
+  assert.match(mainTs, /paneLayout\.setShare\("turtle"/);
+  assert.match(indexHtml, /id="lesson-editor-resizer"/);
+  assert.match(indexHtml, /id="editor-turtle-resizer"/);
+  assert.match(mainTs, /createPaneResizeController\(paneLayout\)/);
+  assert.match(
+    mainTs,
+    /attachPaneResizer\(lessonEditorResizer,\s*"lesson",\s*"editor"\)/,
+  );
+  assert.match(
+    mainTs,
+    /attachPaneResizer\(editorTurtleResizer,\s*"editor",\s*"turtle"\)/,
+  );
+  assert.match(mainTs, /createVoiceTutorPanelController/);
+  assert.match(mainTs, /voiceTutorPanel\.toggle/);
+  assert.match(
+    mainTs,
+    /voiceTutorLauncherButton\.ariaExpanded = String\(view\.expanded\)/,
+  );
 });
 
 test("web/main.ts asserts every DOM element lookup via the tested assertPresent helper, not a manual if/throw", () => {

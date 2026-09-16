@@ -76,6 +76,7 @@ export type {
 export type {
   VoiceTutorEvent,
   VoiceTutorEventListener,
+  VoiceTutorInteractionMode,
   VoiceTutorSession,
   VoiceTutorStatus,
 } from "./tutor/voice-session.js";

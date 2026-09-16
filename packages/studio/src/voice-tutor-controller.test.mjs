@@ -10,14 +10,16 @@ class FakeSession {
   connected = 0;
   disconnected = 0;
   muted = [];
+  interactionModes = [];
   grounding = [];
   results = [];
+  responseRequests = [];
   connectError = null;
 
   async connect() {
     if (this.connectError) throw this.connectError;
     this.connected++;
-    this.emit({ kind: "status", status: "listening" });
+    this.emit({ kind: "status", status: "ready" });
   }
 
   async disconnect() {
@@ -27,6 +29,34 @@ class FakeSession {
 
   async setMuted(value) {
     this.muted.push(value);
+  }
+
+  async setInteractionMode(value) {
+    this.interactionModes.push(value);
+  }
+
+  async startListening() {
+    this.muted.push(false);
+    this.emit({ kind: "status", status: "listening" });
+  }
+
+  async finishListening() {
+    this.muted.push(true);
+    this.emit({ kind: "status", status: "thinking" });
+  }
+
+  async cancelResponse() {
+    this.emit({ kind: "status", status: "ready" });
+  }
+
+  async requestResponse(instruction) {
+    this.responseRequests.push(instruction);
+    this.emit({ kind: "status", status: "thinking" });
+  }
+
+  async cancelTurn() {
+    this.muted.push(true);
+    this.emit({ kind: "status", status: "ready" });
   }
 
   async updateGrounding(brief) {
@@ -61,11 +91,12 @@ async function flush() {
   await Promise.resolve();
 }
 
-test("controller connects, maps speaking/listening states, accumulates transcripts, mutes, and disconnects", async () => {
+test("controller defaults to continuous conversation and accumulates transcripts", async () => {
   const state = createStudioState({
     source: "forward 10",
     lesson: { lessonId: lesson.id, title: lesson.title },
   });
+
   const session = new FakeSession();
   const controller = createVoiceTutorController({
     state,
@@ -75,43 +106,143 @@ test("controller connects, maps speaking/listening states, accumulates transcrip
   });
 
   await controller.setEnabled(true);
-  assert.equal(controller.getView().status, "listening");
+  assert.equal(controller.getView().status, "ready");
+  assert.equal(controller.getView().primaryActionLabel, "End conversation");
+  assert.equal(controller.getView().interactionMode, "conversation");
+  assert.deepEqual(session.interactionModes, ["conversation"]);
+  assert.deepEqual(session.muted, [false]);
   assert.equal(session.grounding[0].grounding.learnerLevel, "2");
+  await controller.setInteractionMode("push-to-talk");
+  assert.equal(controller.getView().primaryActionLabel, "Hold to talk");
+  await controller.startListening();
+  assert.equal(controller.getView().status, "listening");
+  assert.equal(controller.getView().primaryActionPressed, true);
+  await controller.finishListening();
+  assert.equal(controller.getView().status, "thinking");
   session.emit({ kind: "status", status: "speaking" });
+  session.emit({ kind: "learner-transcript", text: "I see", final: false });
   session.emit({ kind: "tutor-transcript", text: "Look ", final: false });
   session.emit({ kind: "tutor-transcript", text: "again.", final: false });
-  session.emit({
-    kind: "tutor-transcript",
-    text: "Look again.",
-    final: true,
-  });
   session.emit({
     kind: "learner-transcript",
     text: "I see it.",
     final: true,
   });
+  session.emit({
+    kind: "tutor-transcript",
+    text: "Look again.",
+    final: true,
+  });
   assert.equal(controller.getView().status, "speaking");
   assert.deepEqual(
     controller.getView().transcript.map((entry) => entry.text),
-    ["Look again.", "I see it."],
+    ["I see it.", "Look again."],
   );
 
   await controller.setMuted(true);
   assert.equal(controller.getView().muted, true);
-  assert.deepEqual(session.muted, [true]);
+  assert.deepEqual(session.muted, [false, true, false, true, true]);
   await controller.setEnabled(false);
   assert.equal(controller.getView().status, "off");
   await controller.dispose();
   assert.ok(session.disconnected >= 2);
 });
 
-test("grounding refreshes only for source, lesson, diagnostics, and completed-run changes", async () => {
+test("controller stops tutor speech and marks only incomplete transcript as interrupted", async () => {
   const state = createStudioState({ source: "forward 10" });
   const session = new FakeSession();
   const controller = createVoiceTutorController({
     state,
     session,
     runController: { run() {} },
+  });
+  await controller.setEnabled(true);
+
+  session.emit({ kind: "status", status: "speaking" });
+  session.emit({
+    kind: "tutor-transcript",
+    text: "First thought",
+    final: false,
+  });
+  await controller.stopTutor();
+  assert.equal(controller.getView().status, "ready");
+  assert.equal(controller.getView().transcript[0].interrupted, true);
+  assert.match(controller.getView().transcript[0].label, /\(interrupted\)$/);
+
+  session.emit({ kind: "status", status: "speaking" });
+  session.emit({ kind: "tutor-transcript", text: "Complete.", final: true });
+  session.emit({ kind: "status", status: "listening" });
+  assert.equal(controller.getView().transcript[1].interrupted, false);
+  await controller.dispose();
+});
+
+test("follow-up actions expand, repeat, and advance exactly one deterministic hint rung", async () => {
+  const state = createStudioState({
+    source: "repeat 3 [ forward 100 right 90 ]",
+  });
+  const session = new FakeSession();
+  const controller = createVoiceTutorController({
+    state,
+    session,
+    runController: { run() {} },
+  });
+  await controller.setEnabled(true);
+  assert.equal(controller.getView().canExpandResponse, false);
+  assert.equal(controller.getView().canRequestHint, true);
+
+  session.emit({
+    kind: "tutor-transcript",
+    text: "What should the turns add up to?",
+    final: true,
+  });
+  assert.equal(controller.getView().canExpandResponse, true);
+  await controller.tellMeMore();
+  await controller.sayThatAgain();
+  await controller.giveAnotherHint();
+
+  assert.match(session.responseRequests[0], /same concept/);
+  assert.match(session.responseRequests[1], /more clearly and briefly/);
+  assert.match(session.responseRequests[2], /deterministic OpenLogo hint rung/);
+  assert.match(session.responseRequests[2], /"stage":"nudge"/);
+  assert.equal(session.responseRequests.length, 3);
+  await controller.dispose();
+});
+
+test("controller cancels an active turn and ignores release before connection completes", async () => {
+  const state = createStudioState({ source: "forward 10" });
+  const session = new FakeSession();
+  const controller = createVoiceTutorController({
+    state,
+    session,
+    runController: { run() {} },
+  });
+
+  await controller.setInteractionMode("push-to-talk");
+  await controller.startListening();
+  assert.equal(controller.getView().status, "listening");
+  await controller.cancelTurn();
+  assert.equal(controller.getView().status, "ready");
+  assert.equal(controller.getView().muted, true);
+
+  await controller.finishListening();
+  assert.equal(controller.getView().status, "ready");
+  await controller.dispose();
+});
+
+test("grounding refreshes only for source, lesson, diagnostics, and completed-run changes", async () => {
+  const state = createStudioState({ source: "forward 10" });
+  const session = new FakeSession();
+  let scheduledUpdate;
+  const controller = createVoiceTutorController({
+    state,
+    session,
+    runController: { run() {} },
+    scheduleGroundingUpdate(update) {
+      scheduledUpdate = update;
+      return () => {
+        scheduledUpdate = undefined;
+      };
+    },
   });
   await controller.setEnabled(true);
   const initial = session.grounding.length;
@@ -121,8 +252,11 @@ test("grounding refreshes only for source, lesson, diagnostics, and completed-ru
   state.setDiagnostics([]);
   state.setLesson({ lessonId: lesson.id, title: lesson.title });
   state.setLastRunResult({ source: "right 90", output: [], diagnostics: [] });
+  assert.equal(session.grounding.length, initial);
+  scheduledUpdate();
   await flush();
-  assert.equal(session.grounding.length, initial + 4);
+  assert.equal(session.grounding.length, initial + 1);
+  assert.equal(session.grounding.at(-1).grounding.currentSource, "right 90");
   await controller.dispose();
 });
 
@@ -136,12 +270,16 @@ test("tools read state, run unchanged source, select lines, and return explicit 
     runController: {
       run() {
         runs++;
+        state.setOutput(["finished"]);
+        state.setDiagnostics([]);
+        state.setRunStatus("running");
       },
     },
   });
   await controller.setEnabled(true);
 
   for (const [callId, name, argumentsJson] of [
+    ["reference", "get_openlogo_reference", '{"profile":"core-language"}'],
     ["program", "get_program", "{}"],
     ["progress", "get_lesson_progress", "{}"],
     ["run", "run_program", "{}"],
@@ -154,6 +292,25 @@ test("tools read state, run unchanged source, select lines, and return explicit 
   }
 
   assert.equal(runs, 1);
+  assert.deepEqual(
+    session.results.find((item) => item.callId === "run").result.result,
+    {
+      runStatus: "running",
+      visualPlaybackInProgress: true,
+      output: ["finished"],
+      diagnostics: [],
+    },
+  );
+  assert.ok(
+    session.results
+      .find((item) => item.callId === "reference")
+      .result.result.primitives.includes("print"),
+  );
+  assert.ok(
+    session.results
+      .find((item) => item.callId === "reference")
+      .result.result.coreKeywords.includes("define"),
+  );
   assert.deepEqual(state.getState().selection, {
     anchor: [2, 1],
     head: [2, 9],

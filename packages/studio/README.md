@@ -30,20 +30,29 @@ deployments need the same `/api/recognize-board` contract hosted by their backen
 
 ## Local realtime voice tutor
 
-The floating **Talk to your tutor** panel connects the browser microphone and remote audio through
-WebRTC. Studio keeps the provider adapter headless and sends only structured lesson/program
-grounding; tool calls can read progress, run the unchanged program, request the deterministic
-`@openlogo/edu` hint ladder, load curriculum lessons, or select a line. Voice tools never edit source.
+The official OpenLogo logo at the bottom-right opens the realtime tutor card. **Conversation** mode
+keeps the microphone available for natural turn-taking and verbal interruption; **Hold to talk**
+commits only the audio recorded while its control is held. The card can be collapsed without ending
+an active session. It shows live tutor captions, learner transcription, status feedback, transcript
+history, mute/stop controls, and explicit follow-up actions.
+
+Studio keeps the provider adapter headless and sends structured lesson/program grounding. Tool calls
+can read the current source, lesson progress, and canonical parser registry; run the unchanged
+program; request the deterministic `@openlogo/edu` hint ladder; load curriculum lessons; or select a
+line. Voice tools never edit source. The tutor is instructed to stay within canonical OpenLogo,
+remain Socratic, and avoid complete learner solutions.
 
 For local development:
 
 1. Use Node 22 and run `npm ci` from the repository root when dependencies are not already restored.
 2. Run `az login` as a user with access to the Foundry/Azure AI Services resource.
 3. Copy `.env.example` to `.env.local` and set:
-   `OPENLOGO_REALTIME_RESOURCE`, `OPENLOGO_REALTIME_DEPLOYMENT`, and
-   `OPENLOGO_REALTIME_VOICE`. Never put an Azure/OpenAI key or token in this file.
+   `OPENLOGO_REALTIME_RESOURCE`, `OPENLOGO_REALTIME_DEPLOYMENT`,
+   `OPENLOGO_REALTIME_TRANSCRIPTION_DEPLOYMENT`, and `OPENLOGO_REALTIME_VOICE`. The realtime and
+   transcription deployment names must both exist on that resource. Never put an Azure/OpenAI key
+   or token in this file.
 4. Run `npm run dev --workspace @openlogo/studio`, open the shown localhost URL, and select
-   **Talk to your tutor**. The browser asks for microphone permission.
+   the floating OpenLogo logo. The browser asks for microphone permission.
 
 The Vite-only `POST /api/realtime-token` middleware uses the local Azure CLI Entra context with
 scope `https://ai.azure.com/.default`, calls the GA
@@ -52,12 +61,21 @@ its expiry and WebRTC call metadata. Standard credentials never enter browser co
 exists only during Vite development; any production host needs an equivalent authenticated backend
 route.
 
+The WebRTC call intentionally does not enable `webrtcfilter=on`: Studio executes local tutor tools,
+so function-call events must reach its data channel. This does not expose the Azure CLI credential;
+the browser still receives only the short-lived client secret. Pane widths are independently
+adjustable by dragging the dividers between Lesson, Code editor, and Drawing. The **Pane sizes**
+control provides a keyboard-accessible fallback, and chosen proportions persist in local storage.
+
+See [`docs/voice-tutor.md`](../../docs/voice-tutor.md) for architecture, Azure prerequisites,
+troubleshooting, manual acceptance checks, and resource cleanup.
+
 Targeted checks:
 
 ```text
 npm run build --workspace @openlogo/edu
 npm run build --workspace @openlogo/studio
-node --test packages/studio/src/realtime-voice-session.test.mjs packages/studio/src/voice-tutor-controller.test.mjs packages/studio/index.test.mjs
+node --test packages/studio/src/realtime-voice-session.test.mjs packages/studio/src/voice-tutor-controller.test.mjs packages/studio/src/voice-tutor-panel.test.mjs packages/studio/src/pane-layout.test.mjs packages/studio/index.test.mjs packages/studio/web/layout.test.mjs
 npm run build:web --workspace @openlogo/studio
 ```
 
@@ -1367,4 +1385,3 @@ A path-scoped, required **`studio-visual`** job in [`.github/workflows/ci.yml`](
 runs this suite inside the matching Playwright container. A `dorny/paths-filter` step in the `meta`
 job gates it so it only runs when the studio (or a package it composes) changes, keeping unrelated
 PRs fast.
-

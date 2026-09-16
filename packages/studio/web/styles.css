@@ -24,6 +24,9 @@
   --ol-button-start: #1f7a3d;
   --ol-button-stop: #a85c14;
   --ol-button-reset: #256ba8;
+  --lesson-pane-share: 20fr;
+  --editor-pane-share: 48fr;
+  --turtle-pane-share: 42fr;
 }
 
 * {
@@ -32,6 +35,7 @@
 
 body {
   margin: 0;
+  overflow-x: clip;
   background: var(--ol-background);
   color: var(--ol-navy);
   font-family:
@@ -44,30 +48,214 @@ body {
 .voice-tutor {
   position: fixed;
   right: 1rem;
-  bottom: 1rem;
+  bottom: 6.5rem;
   z-index: 10;
-  width: min(24rem, calc(100vw - 2rem));
-  max-height: min(28rem, calc(100vh - 2rem));
+  width: min(26rem, calc(100vw - 2rem));
+  max-height: min(38rem, calc(100vh - 2rem));
   overflow: auto;
-  padding: 0.75rem;
+  padding: 1rem;
+  background:
+    linear-gradient(135deg, rgb(46 134 209 / 8%), transparent 10rem),
+    var(--ol-surface);
+  border: 1px solid rgb(46 134 209 / 28%);
+  border-radius: 18px;
+  box-shadow:
+    0 1rem 2.5rem rgb(28 36 48 / 18%),
+    0 0.15rem 0.5rem rgb(28 36 48 / 8%);
+}
+
+.voice-tutor[hidden] {
+  display: none;
+}
+
+.voice-tutor-launcher {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 11;
+  display: grid;
+  width: 4.75rem;
+  height: 4.75rem;
+  padding: 0.25rem;
+  overflow: hidden;
+  place-items: center;
+  border: 2px solid rgb(46 158 79 / 40%);
+  border-radius: 50%;
   background: var(--ol-surface);
-  border: 1px solid var(--ol-border);
-  border-radius: 8px;
-  box-shadow: 0 0.5rem 1.5rem rgb(28 36 48 / 18%);
+  box-shadow:
+    0 0.75rem 1.75rem rgb(28 36 48 / 22%),
+    0 0 0 0.3rem rgb(255 255 255 / 70%);
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.voice-tutor-launcher:hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow:
+    0 1rem 2rem rgb(28 36 48 / 26%),
+    0 0 0 0.3rem rgb(255 255 255 / 80%);
+}
+
+.voice-tutor-launcher:focus-visible {
+  outline: 3px solid var(--ol-blue);
+  outline-offset: 3px;
+}
+
+.voice-tutor-launcher img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.voice-tutor-launcher::after {
+  position: absolute;
+  right: 0.25rem;
+  bottom: 0.35rem;
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 2px solid var(--ol-surface);
+  border-radius: 50%;
+  background: #8793a1;
+  content: "";
+}
+
+.voice-tutor-launcher[data-status="ready"]::after {
+  background: var(--ol-green);
+}
+
+.voice-tutor-launcher[data-status="listening"]::after {
+  background: var(--ol-orange);
+  animation: voice-tutor-launcher-listening 1.2s ease-out infinite;
+}
+
+.voice-tutor-launcher[data-status="thinking"]::after {
+  background: var(--ol-purple);
+}
+
+.voice-tutor-launcher[data-status="speaking"]::after {
+  background: var(--ol-blue);
+}
+
+.voice-tutor-launcher[data-status="error"]::after,
+.voice-tutor-launcher[data-status="unavailable"]::after {
+  background: var(--ol-error);
+}
+
+@keyframes voice-tutor-launcher-listening {
+  70% {
+    box-shadow: 0 0 0 0.5rem rgb(242 153 74 / 0%);
+  }
+}
+
+.voice-tutor-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+}
+
+.voice-tutor-heading h2,
+.voice-tutor-heading p {
+  margin: 0;
+}
+
+.voice-tutor-heading h2 {
+  font-size: 1.05rem;
+}
+
+.voice-tutor-heading p {
+  margin-top: 0.15rem;
+  color: #566171;
+  font-size: 0.82rem;
+}
+
+.voice-tutor-avatar {
+  display: grid;
+  flex: 0 0 2.75rem;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--ol-surface);
+  box-shadow: 0 0.2rem 0.6rem rgb(46 134 209 / 28%);
+}
+
+.voice-tutor-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.voice-tutor-mode-label {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: #566171;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .voice-tutor-controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 0.5rem;
+  margin-top: 0.65rem;
 }
 
+.voice-tutor-follow-ups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+  margin-top: 0.65rem;
+}
+
+.voice-tutor-follow-ups button {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.45rem;
+  background: #eef5fb;
+  color: #215f94;
+  font-size: 0.76rem;
+}
+
+.voice-tutor select,
 .voice-tutor button {
   min-height: 2.5rem;
-  border: 1px solid var(--ol-border);
-  border-radius: 6px;
+  border: 1px solid #c7d5e3;
+  border-radius: 10px;
   background: var(--ol-navy);
   color: var(--ol-surface);
   font-weight: 600;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.voice-tutor button:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0.25rem 0.6rem rgb(28 36 48 / 14%);
+}
+
+#voice-tutor-toggle {
+  background: var(--ol-button-start);
+}
+
+#voice-tutor-mute,
+#voice-tutor-cancel-turn {
+  padding-inline: 0.75rem;
+  background: var(--ol-surface);
+  color: var(--ol-navy);
+}
+
+.voice-tutor select {
+  width: 100%;
+  padding: 0 0.5rem;
+  background: var(--ol-surface);
+  color: var(--ol-navy);
 }
 
 .voice-tutor button:disabled {
@@ -75,22 +263,168 @@ body {
   cursor: not-allowed;
 }
 
+#voice-tutor-toggle[aria-pressed="true"] {
+  background: var(--ol-button-stop);
+  box-shadow: 0 0 0 0.2rem rgb(168 92 20 / 22%);
+}
+
+#voice-tutor-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 10px;
+  background: #f1f4f7;
+  color: #44505f;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+#voice-tutor-status::before {
+  width: 0.65rem;
+  height: 0.65rem;
+  flex: 0 0 0.65rem;
+  border-radius: 50%;
+  background: #8793a1;
+  content: "";
+}
+
+#voice-tutor-status[data-status="ready"]::before {
+  background: var(--ol-green);
+}
+
+#voice-tutor-status[data-status="listening"]::before {
+  background: var(--ol-orange);
+  box-shadow: 0 0 0 0 rgb(242 153 74 / 45%);
+  animation: voice-tutor-listening 1.2s ease-out infinite;
+}
+
+#voice-tutor-status[data-status="thinking"]::before {
+  background: var(--ol-purple);
+}
+
+#voice-tutor-status[data-status="speaking"]::before {
+  background: var(--ol-blue);
+}
+
+#voice-tutor-status[data-status="error"]::before,
+#voice-tutor-status[data-status="unavailable"]::before {
+  background: var(--ol-error);
+}
+
+@keyframes voice-tutor-listening {
+  70% {
+    box-shadow: 0 0 0 0.45rem rgb(242 153 74 / 0%);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgb(242 153 74 / 0%);
+  }
+}
+
 .voice-tutor-transcript {
-  margin: 0.5rem 0 0;
-  padding-left: 1.5rem;
+  display: flex;
+  max-height: 16rem;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0.7rem 0 0;
+  padding: 0.15rem;
+  overflow-y: auto;
+  list-style: none;
+  scroll-behavior: smooth;
 }
 
 .voice-tutor-transcript:empty {
   display: none;
 }
 
+.voice-tutor-message {
+  display: flex;
+  max-width: 88%;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 14px 14px 14px 4px;
+  background: #edf2f7;
+  color: #263342;
+  font-size: 0.86rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.voice-tutor-message strong {
+  color: #526071;
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.voice-tutor-message--learner {
+  align-self: flex-end;
+  border-radius: 14px 14px 4px;
+  background: #e3f1fb;
+}
+
+.voice-tutor-message--learner strong {
+  color: #286997;
+}
+
+.voice-tutor-message--live::after {
+  width: 1.4rem;
+  height: 0.2rem;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    currentcolor 20%,
+    transparent 20% 40%,
+    currentcolor 40% 60%,
+    transparent 60% 80%,
+    currentcolor 80%
+  );
+  opacity: 0.35;
+  content: "";
+  animation: voice-tutor-caption-live 900ms ease-in-out infinite alternate;
+}
+
+@keyframes voice-tutor-caption-live {
+  to {
+    opacity: 0.75;
+  }
+}
+
 .voice-tutor audio {
   display: none;
+}
+
+@media (max-width: 34rem) {
+  .voice-tutor {
+    right: 0.5rem;
+    bottom: 5.75rem;
+    width: calc(100vw - 1rem);
+    max-height: min(34rem, calc(100vh - 1rem));
+  }
+
+  .voice-tutor-launcher {
+    right: 0.65rem;
+    bottom: 0.65rem;
+    width: 4.5rem;
+    height: 4.5rem;
+  }
+
+  .voice-tutor-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  #voice-tutor-toggle {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .voice-tutor,
   .voice-tutor * {
+    animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
   }
@@ -138,13 +472,9 @@ header h1 {
  * #313 — side-by-side code/run layout. Narrow (default/mobile) viewports keep the original
  * single-column stack, in DOM order (editor, controls, turtle canvas, output, diagnostics) — the
  * same order #279's REPL_FOCUS_ORDER/index.test.mjs already pin, so no reflow ever separates
- * visual order from tab order there. From the 48rem (~768px) breakpoint up (media queries cannot
- * reference custom properties, so the value is repeated in the @media rule below), a two-column
- * grid places the editor above the run controls in the left column and the turtle canvas spans
- * both rows in the right column — visually adjacent to the editor it draws for, while output and
- * diagnostics stay full-width below. Only `grid-template-areas`/`-columns` change between the two
- * layouts; every pane keeps its existing id/role/aria-label, so #279's landmarks and focus order
- * are untouched by this purely presentational, CSS-only slice.
+ * visual order from tab order there. From 48rem up, an editor-first two-column grid keeps the
+ * turtle beside the editor. Lesson mode stays two-column until 72rem, where a compact lesson
+ * column is added without shrinking the dominant editor track.
  *
  * Extension slot for the future lesson pane (#127/M3, target end-state
  * "Lesson | Editor | Run/Canvas"): `#lesson-pane`/`.pane-lesson` in index.html starts `hidden`,
@@ -156,14 +486,14 @@ header h1 {
  * clears that `hidden` attribute, with zero further edits to this file, index.html, or
  * app-shell.ts (whose "lesson" `RegionName` this reuses, unchanged since #123). `:has()` is
  * supported by every evergreen browser this project targets. When present, the lesson pane is
- * always its own leftmost column ahead of editor/turtle (`"lesson editor turtle"` below) — never
- * sharing the editor's column — matching the learner flow and DOM/focus order (lesson pane first
- * in `REPL_FOCUS_ORDER`).
+ * becomes its own leftmost column only at the 72rem desktop breakpoint; below that it spans the
+ * row so it cannot force page-level horizontal scrolling.
  */
 main {
   display: grid;
   gap: 1rem;
-  padding: 1rem 1.5rem 2rem;
+  width: 100%;
+  padding: 1rem clamp(0.75rem, 2vw, 1.5rem) 2rem;
   max-width: 960px;
   margin: 0 auto;
   grid-template-columns: 1fr;
@@ -199,14 +529,127 @@ main section {
   min-height: 0;
   max-height: calc(100vh - 10rem);
   overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.pane-lesson h2,
+.pane-lesson h3,
+.pane-lesson p {
+  overflow-wrap: anywhere;
+}
+
+.worked-example {
+  min-width: 0;
+  margin-block: 0.75rem;
+  padding: 0.7rem;
+  border: 1px solid rgb(46 134 209 / 20%);
+  border-radius: 8px;
+  background: #f6f9fc;
+}
+
+.worked-example h3 {
+  margin-top: 0;
+}
+
+.worked-example-source {
+  max-width: 100%;
+  margin-block: 0.5rem;
+  padding: 0.6rem;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: #eaf1f7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.worked-example-explanation {
+  margin-bottom: 0;
 }
 
 .pane-editor {
   grid-area: editor;
 }
 
+.pane-resizer {
+  position: relative;
+  z-index: 2;
+  display: none;
+  width: 0.7rem;
+  align-self: stretch;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.pane-resizer::after {
+  position: absolute;
+  top: 0.5rem;
+  bottom: 0.5rem;
+  left: calc(50% - 1px);
+  width: 1px;
+  border-radius: 999px;
+  background: #cbd8cf;
+  content: "";
+  transition:
+    width 120ms ease,
+    left 120ms ease,
+    background-color 120ms ease;
+}
+
+.pane-resizer::before {
+  position: absolute;
+  z-index: 1;
+  top: calc(50% - 1.5rem);
+  left: calc(50% - 0.22rem);
+  width: 0.44rem;
+  height: 3rem;
+  border: 1px solid #afc5b5;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, #688975 1px, transparent 1.5px) center / 100%
+      0.55rem,
+    #edf4ef;
+  box-shadow: 0 0.15rem 0.35rem rgb(28 36 48 / 10%);
+  content: "";
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.pane-resizer:hover::after,
+.pane-resizer:active::after {
+  left: calc(50% - 1px);
+  width: 2px;
+  background: #9fc2a9;
+}
+
+.pane-resizer:hover::before,
+.pane-resizer:active::before {
+  border-color: var(--ol-green);
+  background:
+    radial-gradient(circle, #257b3e 1px, transparent 1.5px) center / 100%
+      0.55rem,
+    #e1f2e6;
+  box-shadow: 0 0.2rem 0.5rem rgb(46 158 79 / 22%);
+  transform: scaleY(1.06);
+}
+
+.pane-resizer-lesson-editor {
+  grid-area: lesson-editor-resizer;
+}
+
+.pane-resizer-editor-turtle {
+  grid-area: editor-turtle-resizer;
+}
+
 .pane-controls {
   grid-area: controls;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .pane-turtle {
@@ -270,18 +713,17 @@ main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
 
 @media (min-width: 48rem) {
   main {
-    /* #472 — use the available page width instead of the old 1200px cap. */
-    max-width: 1400px;
-    /* #472 — the editor track floors at 0 (`minmax(0, 1fr)`) so its long lines scroll rather
-       than stretch the column; the turtle track has a rem-based minimum floor so the drawing
-       pane keeps a usable minimum size, and is weighted (1.2fr) toward the canvas so it grows
-       to fill the width available to it rather than being squeezed to a thumbnail. */
-    grid-template-columns: minmax(0, 1fr) minmax(18rem, 1.2fr);
+    /* Use the available page width while keeping readable outer gutters. */
+    max-width: 1600px;
+    /* The editor receives most flexible width; the turtle keeps a usable 15rem floor. */
+    grid-template-columns:
+      minmax(0, var(--editor-pane-share)) 0.7rem
+      minmax(20rem, var(--turtle-pane-share));
     grid-template-areas:
-      "editor turtle"
-      "controls turtle"
-      "output output"
-      "diagnostics diagnostics";
+      "editor editor-turtle-resizer turtle"
+      "controls editor-turtle-resizer turtle"
+      "output output output"
+      "diagnostics diagnostics diagnostics";
   }
 
   .pane-turtle {
@@ -289,46 +731,82 @@ main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
     align-self: start;
   }
 
-  /* The lesson pane is present — add its own leftmost column ahead of editor/controls, matching
-     the target end-state "Lesson | Editor | Run/Canvas" three-pane layout. `minmax(0, 300px)`
-     gives it a ~300px starting width (a starting figure, not normative) that the grid track
-     sizing algorithm shrinks toward its 0 minimum first under width pressure. The editor track
-     floors at 0 so its long lines scroll, and the turtle track keeps the same `minmax(18rem, …)`
-     minimum floor as the two-column layout above, so the drawing pane never collapses to a
-     thumbnail even when the lesson pane is visible in this narrower three-column split (#472). */
+  .pane-resizer-editor-turtle {
+    display: block;
+  }
+
+  /* Lesson mode stays two-column through tablet/small-laptop widths. The lesson spans the full
+     row instead of forcing a premature three-column grid that creates horizontal overflow. */
   main:has(.pane-lesson:not([hidden])) {
-    max-width: 1400px;
-    grid-template-columns: minmax(0, 300px) minmax(0, 1fr) minmax(18rem, 1.2fr);
+    max-width: 1600px;
+    grid-template-columns:
+      minmax(0, var(--editor-pane-share)) 0.7rem
+      minmax(20rem, var(--turtle-pane-share));
     grid-template-areas:
-      "lesson editor turtle"
-      "lesson controls turtle"
-      "lesson output output"
-      "lesson diagnostics diagnostics";
+      "lesson lesson lesson"
+      "editor editor-turtle-resizer turtle"
+      "controls editor-turtle-resizer turtle"
+      "output output output"
+      "diagnostics diagnostics diagnostics";
   }
 
   /* #334 — the tutor-output pane is present: append its own full-width row after diagnostics,
      two-column layout. */
   main:has(.pane-tutor:not([hidden])) {
     grid-template-areas:
-      "editor turtle"
-      "controls turtle"
-      "output output"
-      "diagnostics diagnostics"
-      "tutor tutor";
+      "editor editor-turtle-resizer turtle"
+      "controls editor-turtle-resizer turtle"
+      "output output output"
+      "diagnostics diagnostics diagnostics"
+      "tutor tutor tutor";
   }
 
-  /* Both the lesson and tutor-output panes are present at once — combine both extension areas.
-     Same floored three-column tracks as the lesson-only rule above so the turtle keeps its
-     minimum size here too (#472). */
+  /* Both optional panes preserve the same overflow-safe two-column lesson layout. */
   main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
-    max-width: 1400px;
-    grid-template-columns: minmax(0, 300px) minmax(0, 1fr) minmax(18rem, 1.2fr);
+    max-width: 1600px;
+    grid-template-columns:
+      minmax(0, var(--editor-pane-share)) 0.7rem
+      minmax(20rem, var(--turtle-pane-share));
     grid-template-areas:
-      "lesson editor turtle"
-      "lesson controls turtle"
-      "lesson output output"
-      "lesson diagnostics diagnostics"
-      "lesson tutor tutor";
+      "lesson lesson lesson"
+      "editor editor-turtle-resizer turtle"
+      "controls editor-turtle-resizer turtle"
+      "output output output"
+      "diagnostics diagnostics diagnostics"
+      "tutor tutor tutor";
+  }
+}
+
+@media (min-width: 72rem) {
+  main:has(.pane-lesson:not([hidden])) {
+    grid-template-columns:
+      minmax(12rem, var(--lesson-pane-share)) 0.7rem
+      minmax(0, var(--editor-pane-share))
+      0.7rem
+      minmax(20rem, var(--turtle-pane-share));
+    grid-template-areas:
+      "lesson lesson-editor-resizer editor editor-turtle-resizer turtle"
+      "lesson lesson-editor-resizer controls editor-turtle-resizer turtle"
+      "lesson lesson-editor-resizer output output output"
+      "lesson lesson-editor-resizer diagnostics diagnostics diagnostics";
+  }
+
+  main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
+    grid-template-columns:
+      minmax(12rem, var(--lesson-pane-share)) 0.7rem
+      minmax(0, var(--editor-pane-share))
+      0.7rem
+      minmax(20rem, var(--turtle-pane-share));
+    grid-template-areas:
+      "lesson lesson-editor-resizer editor editor-turtle-resizer turtle"
+      "lesson lesson-editor-resizer controls editor-turtle-resizer turtle"
+      "lesson lesson-editor-resizer output output output"
+      "lesson lesson-editor-resizer diagnostics diagnostics diagnostics"
+      "lesson lesson-editor-resizer tutor tutor tutor";
+  }
+
+  main:has(.pane-lesson:not([hidden])) .pane-resizer-lesson-editor {
+    display: block;
   }
 }
 
@@ -345,7 +823,7 @@ main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
  */
 .cm-editor {
   width: 100%;
-  min-height: 12rem;
+  min-height: clamp(18rem, 52vh, 38rem);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.95rem;
   border: 1px solid var(--ol-border);
@@ -515,8 +993,8 @@ main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
   color: var(--ol-surface);
   border: none;
   border-radius: 6px;
-  padding: 0.4rem 1rem;
-  margin-right: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  margin-right: 0;
   font-weight: 600;
   cursor: pointer;
   display: inline-flex;
@@ -581,7 +1059,9 @@ main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-  margin-right: 0.5rem;
+  max-width: 100%;
+  margin-right: 0;
+  flex-wrap: wrap;
 }
 
 .speed-control label {
@@ -590,7 +1070,7 @@ main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
 }
 
 #speed-slider {
-  width: 8rem;
+  width: min(8rem, 35vw);
   accent-color: var(--ol-purple);
 }
 
@@ -598,6 +1078,58 @@ main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
   font-size: 0.8rem;
   color: var(--ol-navy);
   min-width: 4.5rem;
+}
+
+.pane-controls > p {
+  min-width: 0;
+  margin-block: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.pane-size-controls {
+  position: relative;
+}
+
+.pane-size-controls summary {
+  min-height: 2.25rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--ol-border);
+  border-radius: 6px;
+  background: var(--ol-surface);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pane-size-sliders {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  display: grid;
+  width: min(18rem, calc(100vw - 3rem));
+  grid-template-columns: 6rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.85rem;
+  border: 1px solid var(--ol-border);
+  border-radius: 10px;
+  background: var(--ol-surface);
+  box-shadow: 0 0.75rem 1.5rem rgb(28 36 48 / 18%);
+}
+
+.pane-size-sliders label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.pane-size-sliders input {
+  width: 100%;
+  accent-color: var(--ol-blue);
+}
+
+.run-log-wrapper {
+  flex: 1 0 100%;
+  min-width: 0;
 }
 
 :focus-visible {

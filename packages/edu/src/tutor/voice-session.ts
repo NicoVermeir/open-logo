@@ -2,7 +2,15 @@ import type { TutorBrief } from "./tutor-brief.js";
 
 /** Connection states exposed by a provider-neutral voice tutor session. */
 export type VoiceTutorStatus =
-  "disconnected" | "connecting" | "listening" | "speaking";
+  | "disconnected"
+  | "connecting"
+  | "ready"
+  | "listening"
+  | "thinking"
+  | "speaking";
+
+/** Learner-selected microphone interaction style. */
+export type VoiceTutorInteractionMode = "conversation" | "push-to-talk";
 
 /** Events emitted by a {@link VoiceTutorSession}. */
 export type VoiceTutorEvent =
@@ -48,6 +56,18 @@ export interface VoiceTutorSession {
   disconnect(): Promise<void>;
   /** Enables or disables capture from the learner's microphone. */
   setMuted(muted: boolean): Promise<void>;
+  /** Selects continuous conversation or learner-controlled push-to-talk. */
+  setInteractionMode(mode: VoiceTutorInteractionMode): Promise<void>;
+  /** Starts one learner-controlled microphone turn. */
+  startListening(): Promise<void>;
+  /** Ends the current microphone turn and waits for the tutor's response. */
+  finishListening(): Promise<void>;
+  /** Stops the tutor's current generated response without ending the session. */
+  cancelResponse(): Promise<void>;
+  /** Cancels the current learner turn without changing the program. */
+  cancelTurn(): Promise<void>;
+  /** Requests one spoken tutor response from a host-controlled follow-up action. */
+  requestResponse(instruction: string): Promise<void>;
   /** Replaces the current lesson and program grounding. */
   updateGrounding(brief: TutorBrief): Promise<void>;
   /** Returns a completed tool call to the provider so it can continue its response. */

@@ -698,3 +698,21 @@ export type {
   VoiceTutorTranscriptEntry,
 } from "./voice-tutor-controller.js";
 export { createVoiceTutorController } from "./voice-tutor-controller.js";
+
+export type {
+  VoiceTutorPanelController,
+  VoiceTutorPanelView,
+} from "./voice-tutor-panel.js";
+export { createVoiceTutorPanelController } from "./voice-tutor-panel.js";
+
+export type {
+  PaneLayoutController,
+  PaneLayoutStorage,
+  PaneLayoutView,
+  PaneResizeController,
+  ResizablePane,
+} from "./pane-layout.js";
+export {
+  createPaneLayoutController,
+  createPaneResizeController,
+} from "./pane-layout.js";

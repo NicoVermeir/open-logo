@@ -120,7 +120,9 @@ function realtimeTokenProxy(env: Record<string, string>): Plugin {
           const resource = env.OPENLOGO_REALTIME_RESOURCE;
           const model = env.OPENLOGO_REALTIME_DEPLOYMENT;
           const voice = env.OPENLOGO_REALTIME_VOICE;
-          if (!resource || !model || !voice) {
+          const transcriptionModel =
+            env.OPENLOGO_REALTIME_TRANSCRIPTION_DEPLOYMENT;
+          if (!resource || !model || !voice || !transcriptionModel) {
             response.statusCode = 503;
             response.setHeader("content-type", "application/json");
             response.end(
@@ -180,9 +182,10 @@ function realtimeTokenProxy(env: Record<string, string>): Plugin {
               JSON.stringify({
                 value: token.value,
                 expiresAt: token.expires_at,
-                callsUrl: `https://${resource}.openai.azure.com/openai/v1/realtime/calls?webrtcfilter=on`,
+                callsUrl: `https://${resource}.openai.azure.com/openai/v1/realtime/calls`,
                 model,
                 voice,
+                transcriptionModel,
               }),
             );
           } catch (error) {

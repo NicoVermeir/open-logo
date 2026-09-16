@@ -90,7 +90,7 @@ test("web/styles.css keeps the narrow (default) layout single-column with every 
   );
 });
 
-test("web/styles.css switches to a two-column grid at the 48rem breakpoint, with the turtle canvas spanning both rows beside editor/controls (#410)", () => {
+test("web/styles.css switches to an editor/turtle grid with a draggable divider at the 48rem breakpoint", () => {
   const mediaStart = stylesCss.indexOf("@media (min-width: 48rem)");
   assert.ok(
     mediaStart >= 0,
@@ -106,8 +106,8 @@ test("web/styles.css switches to a two-column grid at the 48rem breakpoint, with
   );
   assert.match(
     mainRuleMatch[1],
-    /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(\s*[1-9][\d.]*rem\s*,\s*[1-9][\d.]*fr\s*\);/,
-    "the 48rem two-column grid must floor the editor track at 0 (`minmax(0, 1fr)`) so long, " +
+    /grid-template-columns:\s*minmax\(0,\s*var\(--editor-pane-share\)\)\s+0\.7rem\s+minmax\(20rem,\s*var\(--turtle-pane-share\)\);/,
+    "the 48rem two-column grid must floor the editor track at 0 so long, " +
       "non-wrapping lines scroll inside the editor instead of stealing width, and give the " +
       "turtle track a NON-ZERO rem-based minimum floor (not `0rem`/`0fr`) so the drawing pane " +
       "keeps a usable minimum size (#472)",
@@ -125,13 +125,12 @@ test("web/styles.css switches to a two-column grid at the 48rem breakpoint, with
   assert.deepEqual(
     rows,
     [
-      "editor turtle",
-      "controls turtle",
-      "output output",
-      "diagnostics diagnostics",
+      "editor editor-turtle-resizer turtle",
+      "controls editor-turtle-resizer turtle",
+      "output output output",
+      "diagnostics diagnostics diagnostics",
     ],
-    "the two-column layout must place editor above controls in the left column, with the turtle " +
-      "canvas spanning both rows in the right column, and output/diagnostics full-width below",
+    "the layout must place a draggable divider between editor/controls and the turtle canvas",
   );
 });
 
@@ -175,42 +174,95 @@ test("web/styles.css makes the turtle canvas grow to its column width and stay s
   );
 });
 
-test("web/styles.css keeps the turtle track floored in the lesson-pane :has() three-column layouts too, so the canvas never collapses there (#472)", () => {
+test("web/styles.css keeps lesson mode overflow-safe at the 48rem breakpoint and only uses three columns on wide screens", () => {
   const mediaStart = stylesCss.indexOf("@media (min-width: 48rem)");
   assert.ok(
     mediaStart >= 0,
     "expected a `@media (min-width: 48rem)` breakpoint in styles.css",
   );
-  const mediaBody = stylesCss.slice(mediaStart);
-  // The lesson-only and lesson+tutor rules both override grid-template-columns with a third
-  // (turtle) track; each must keep a non-zero rem floor rather than a bare `1fr`.
+  const wideMediaStart = stylesCss.indexOf("@media (min-width: 72rem)");
+  assert.ok(
+    wideMediaStart > mediaStart,
+    "expected a later 72rem breakpoint for the three-column lesson layout",
+  );
+  const tabletMediaBody = stylesCss.slice(mediaStart, wideMediaStart);
   const lessonSelectors = [
     "main:has(.pane-lesson:not([hidden]))",
     "main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden]))",
   ];
   for (const selector of lessonSelectors) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const ruleMatch = mediaBody.match(
+    const tabletRuleMatch = tabletMediaBody.match(
       new RegExp(`${escaped}\\s*\\{([^}]*)\\}`),
     );
-    assert.ok(
-      ruleMatch,
-      `expected a 48rem-breakpoint \`${selector}\` rule in styles.css`,
+    assert.ok(tabletRuleMatch);
+    assert.match(
+      tabletRuleMatch[1],
+      /grid-template-columns:\s*minmax\(0,\s*var\(--editor-pane-share\)\)\s+0\.7rem\s+minmax\(20rem,\s*var\(--turtle-pane-share\)\);/,
+      `expected \`${selector}\` to remain two-column at 48rem`,
     );
-    const columnsMatch = ruleMatch[1].match(
+
+    const wideMediaBody = stylesCss.slice(wideMediaStart);
+    const wideRuleMatch = wideMediaBody.match(
+      new RegExp(`${escaped}\\s*\\{([^}]*)\\}`),
+    );
+    assert.ok(wideRuleMatch);
+    const columnsMatch = wideRuleMatch[1].match(
       /grid-template-columns:\s*([^;]*);/,
     );
     assert.ok(
       columnsMatch,
-      `expected \`${selector}\` to declare grid-template-columns`,
+      `expected wide \`${selector}\` to declare grid-template-columns`,
     );
     assert.match(
       columnsMatch[1],
-      /minmax\(\s*[1-9][\d.]*rem\s*,\s*[1-9][\d.]*fr\s*\)\s*$/,
-      `the turtle track (last column) in \`${selector}\` must keep a non-zero rem-based minimum ` +
-        `floor so the drawing pane never collapses to a thumbnail when the lesson pane is visible (#472)`,
+      /minmax\(20rem,\s*var\(--turtle-pane-share\)\)\s*$/,
+      `the wide turtle track in \`${selector}\` must keep a non-zero minimum`,
     );
   }
+});
+
+test("web/styles.css wraps lesson source and toolbar controls without creating page-level horizontal scrolling", () => {
+  assert.match(stylesCss, /body\s*\{[^}]*overflow-x:\s*clip;/s);
+  assert.match(
+    stylesCss,
+    /\.worked-example-source\s*\{[^}]*white-space:\s*pre-wrap;[^}]*overflow-wrap:\s*anywhere;/s,
+  );
+  assert.match(stylesCss, /\.pane-controls\s*\{[^}]*flex-wrap:\s*wrap;/s);
+  assert.match(
+    stylesCss,
+    /\.cm-editor\s*\{[^}]*min-height:\s*clamp\(18rem,\s*52vh,\s*38rem\);/s,
+  );
+});
+
+test("web/styles.css exposes persistent custom-property shares for all three resizable panes", () => {
+  assert.match(stylesCss, /--lesson-pane-share:\s*20fr;/);
+  assert.match(stylesCss, /--editor-pane-share:\s*48fr;/);
+  assert.match(stylesCss, /--turtle-pane-share:\s*42fr;/);
+  assert.match(stylesCss, /minmax\(12rem,\s*var\(--lesson-pane-share\)\)/);
+});
+
+test("web/styles.css exposes hoverable mouse-drag dividers between resizable panes", () => {
+  assert.match(
+    stylesCss,
+    /\.pane-resizer\s*\{[^}]*cursor:\s*col-resize;[^}]*touch-action:\s*none;/s,
+  );
+  assert.match(
+    stylesCss,
+    /\.pane-resizer::before\s*\{[^}]*radial-gradient[^}]*#edf4ef;/s,
+  );
+  assert.match(
+    stylesCss,
+    /\.pane-resizer:hover::before,[^}]*border-color:\s*var\(--ol-green\);/s,
+  );
+  assert.match(
+    stylesCss,
+    /\.pane-resizer-editor-turtle\s*\{[^}]*grid-area:\s*editor-turtle-resizer;/s,
+  );
+  assert.match(
+    stylesCss,
+    /\.pane-resizer-lesson-editor\s*\{[^}]*grid-area:\s*lesson-editor-resizer;/s,
+  );
 });
 
 test("web/styles.css keeps the turtle canvas 500x500 backing resolution unchanged — Slice B (#474), not this slice (#472)", () => {

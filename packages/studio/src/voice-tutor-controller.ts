@@ -1,8 +1,8 @@
 import type {
-  LearnerLevel,
   Lesson,
   TutorBrief,
   VoiceTutorEvent,
+  VoiceTutorInteractionMode,
   VoiceTutorSession,
 } from "@openlogo/edu";
 import {
@@ -13,7 +13,14 @@ import {
   isLearnerLevel,
   LESSONS,
 } from "@openlogo/edu";
-import { parse } from "@openlogo/parser";
+import {
+  OL_CHECK_PROFILES,
+  OL_KEYWORDS,
+  OL_PROFILE_KEYWORDS,
+  parse,
+  profilePrimitiveNames,
+  type CheckProfile,
+} from "@openlogo/parser";
 import type { TutorHintStage } from "@openlogo/core";
 import type { RunController } from "./run-controller.js";
 import type {
@@ -23,13 +30,21 @@ import type {
 } from "./state-model.js";
 
 export type VoiceTutorControllerStatus =
-  "off" | "connecting" | "listening" | "speaking" | "error" | "unavailable";
+  | "off"
+  | "connecting"
+  | "ready"
+  | "listening"
+  | "thinking"
+  | "speaking"
+  | "error"
+  | "unavailable";
 
 export interface VoiceTutorTranscriptEntry {
   readonly id: number;
   readonly speaker: "learner" | "tutor";
   readonly text: string;
   readonly final: boolean;
+  readonly interrupted: boolean;
   readonly label: string;
 }
 
@@ -38,6 +53,12 @@ export interface VoiceTutorControllerView {
   readonly statusText: string;
   readonly enabled: boolean;
   readonly muted: boolean;
+  readonly interactionMode: VoiceTutorInteractionMode;
+  readonly primaryActionLabel: string;
+  readonly primaryActionPressed: boolean;
+  readonly canTalk: boolean;
+  readonly canExpandResponse: boolean;
+  readonly canRequestHint: boolean;
   readonly transcript: readonly VoiceTutorTranscriptEntry[];
 }
 
@@ -46,8 +67,16 @@ export interface VoiceTutorController {
   subscribe(listener: (view: VoiceTutorControllerView) => void): Unsubscribe;
   setEnabled(enabled: boolean): Promise<void>;
   setMuted(muted: boolean): Promise<void>;
+  setInteractionMode(mode: VoiceTutorInteractionMode): Promise<void>;
   toggleEnabled(): Promise<void>;
   toggleMuted(): Promise<void>;
+  startListening(): Promise<void>;
+  finishListening(): Promise<void>;
+  stopTutor(): Promise<void>;
+  cancelTurn(): Promise<void>;
+  tellMeMore(): Promise<void>;
+  sayThatAgain(): Promise<void>;
+  giveAnotherHint(): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -56,17 +85,51 @@ export interface VoiceTutorControllerOptions {
   readonly session?: VoiceTutorSession;
   readonly runController: Pick<RunController, "run">;
   readonly lookupLesson?: (lessonId: string) => Lesson | undefined;
+  readonly scheduleGroundingUpdate?: (
+    update: () => void,
+    delayMilliseconds: number,
+  ) => () => void;
 }
+
+const GROUNDING_UPDATE_DELAY_MILLISECONDS = 200;
 
 const STATUS_TEXT: Readonly<Record<VoiceTutorControllerStatus, string>> = {
   off: "Voice tutor is off.",
   connecting: "Connecting to your voice tutor.",
+  ready: "Voice tutor is ready. Hold the button while you talk.",
   listening: "Voice tutor is listening.",
+  thinking: "Voice tutor is thinking.",
   speaking: "Voice tutor is speaking.",
   error: "Voice tutor needs attention.",
   unavailable:
     "Voice tutor is unavailable. You can still use OpenLogo hints and lessons.",
 };
+
+const PUSH_TO_TALK_ACTION_LABEL: Readonly<
+  Record<VoiceTutorControllerStatus, string>
+> = {
+  off: "Hold to talk",
+  connecting: "Connecting…",
+  ready: "Hold to talk",
+  listening: "Listening… release when finished",
+  thinking: "Tutor thinking…",
+  speaking: "Tutor speaking…",
+  error: "Reconnect voice tutor",
+  unavailable: "Voice tutor unavailable",
+};
+
+function primaryActionLabel(
+  status: VoiceTutorControllerStatus,
+  interactionMode: VoiceTutorInteractionMode,
+): string {
+  if (interactionMode === "push-to-talk") {
+    return PUSH_TO_TALK_ACTION_LABEL[status];
+  }
+  if (status === "connecting") return "Connecting…";
+  if (status === "error") return "Reconnect tutor";
+  if (status === "unavailable") return "Voice tutor unavailable";
+  return status === "off" ? "Start conversation" : "End conversation";
+}
 
 function activeLesson(
   state: StudioState,
@@ -125,10 +188,25 @@ export function createVoiceTutorController(
     : "unavailable";
   let enabled = false;
   let muted = false;
+  let interactionMode: VoiceTutorInteractionMode = "conversation";
   let transcript: readonly VoiceTutorTranscriptEntry[] = [];
   let nextTranscriptId = 1;
   let priorHintStage: TutorHintStage | undefined;
   let lastGrounding = options.state.getState();
+  let listeningRequested = false;
+  let cancelScheduledGroundingUpdate: (() => void) | undefined;
+
+  const scheduleGroundingUpdate =
+    options.scheduleGroundingUpdate ??
+    ((update: () => void) => {
+      let cancelled = false;
+      void Promise.resolve().then(() => {
+        if (!cancelled) update();
+      });
+      return () => {
+        cancelled = true;
+      };
+    });
 
   function getView(): VoiceTutorControllerView {
     return {
@@ -136,6 +214,22 @@ export function createVoiceTutorController(
       statusText: STATUS_TEXT[status],
       enabled,
       muted,
+      interactionMode,
+      primaryActionLabel: primaryActionLabel(status, interactionMode),
+      primaryActionPressed:
+        interactionMode === "conversation" ? enabled : status === "listening",
+      canTalk:
+        interactionMode === "conversation"
+          ? status !== "connecting" && status !== "unavailable"
+          : status === "off" ||
+            status === "ready" ||
+            status === "listening" ||
+            status === "speaking" ||
+            status === "error",
+      canExpandResponse:
+        enabled &&
+        transcript.some((entry) => entry.speaker === "tutor" && entry.final),
+      canRequestHint: enabled && status !== "connecting",
       transcript,
     };
   }
@@ -155,12 +249,25 @@ export function createVoiceTutorController(
     text: string,
     final: boolean,
   ): void {
-    const last = transcript.at(-1);
-    if (last?.speaker === speaker && !last.final) {
-      transcript = [
-        ...transcript.slice(0, -1),
-        { ...last, text: final ? text || last.text : last.text + text, final },
-      ];
+    const pendingIndex = transcript.findIndex(
+      (entry) =>
+        entry.speaker === speaker && !entry.final && !entry.interrupted,
+    );
+    if (pendingIndex >= 0) {
+      const pending = transcript[pendingIndex];
+      if (!pending) return;
+      const updatedText = final ? text || pending.text : pending.text + text;
+      transcript = transcript.map((entry, index) =>
+        index === pendingIndex
+          ? {
+              ...pending,
+              text: updatedText,
+              final,
+              interrupted: false,
+              label: `${speaker === "learner" ? "You" : "Tutor"}: ${updatedText}`,
+            }
+          : entry,
+      );
     } else if (text.length > 0) {
       transcript = [
         ...transcript,
@@ -169,23 +276,44 @@ export function createVoiceTutorController(
           speaker,
           text,
           final,
+          interrupted: false,
           label: `${speaker === "learner" ? "You" : "Tutor"}: ${text}`,
         },
       ];
     }
-    if (last?.speaker === speaker && !last.final) {
-      const updated = transcript.at(-1);
-      if (updated) {
-        transcript = [
-          ...transcript.slice(0, -1),
-          {
-            ...updated,
-            label: `${speaker === "learner" ? "You" : "Tutor"}: ${updated.text}`,
-          },
-        ];
-      }
-    }
     publish();
+  }
+
+  function markTutorTranscriptInterrupted(): void {
+    const last = transcript.at(-1);
+    if (last?.speaker !== "tutor" || last.final || last.interrupted) return;
+    transcript = [
+      ...transcript.slice(0, -1),
+      {
+        ...last,
+        interrupted: true,
+        label: `${last.label} (interrupted)`,
+      },
+    ];
+    publish();
+  }
+
+  function updateGroundingNow(): void {
+    if (cancelScheduledGroundingUpdate === undefined) return;
+    cancelScheduledGroundingUpdate?.();
+    cancelScheduledGroundingUpdate = undefined;
+    if (!enabled || !options.session) return;
+    void options.session
+      .updateGrounding(buildBrief(lastGrounding, lookup, priorHintStage))
+      .catch(() => setStatus("error"));
+  }
+
+  function deferGroundingUpdate(): void {
+    cancelScheduledGroundingUpdate?.();
+    cancelScheduledGroundingUpdate = scheduleGroundingUpdate(
+      updateGroundingNow,
+      GROUNDING_UPDATE_DELAY_MILLISECONDS,
+    );
   }
 
   async function executeTool(
@@ -195,6 +323,26 @@ export function createVoiceTutorController(
     const argumentsValue = toolArguments(argumentsJson);
     const state = options.state.getState();
     switch (name) {
+      case "get_openlogo_reference": {
+        const profile = argumentsValue.profile;
+        if (
+          typeof profile !== "string" ||
+          !OL_CHECK_PROFILES.some((candidate) => candidate === profile)
+        ) {
+          throw new Error(`Unknown OpenLogo profile: ${String(profile)}.`);
+        }
+        const checkedProfile = profile as CheckProfile;
+        return {
+          specVersion: "0.1.0",
+          profile: checkedProfile,
+          coreKeywords: OL_KEYWORDS,
+          profileKeywords:
+            (
+              OL_PROFILE_KEYWORDS as Readonly<Record<string, readonly string[]>>
+            )[checkedProfile] ?? [],
+          primitives: profilePrimitiveNames(checkedProfile),
+        };
+      }
       case "get_program":
         return { source: state.source };
       case "get_lesson_progress": {
@@ -207,9 +355,20 @@ export function createVoiceTutorController(
           diagnosticCount: state.diagnostics.length,
         };
       }
-      case "run_program":
+      case "run_program": {
         options.runController.run();
-        return { runStatus: options.state.getState().runStatus };
+        const resultState = options.state.getState();
+        return {
+          runStatus: resultState.runStatus,
+          visualPlaybackInProgress: resultState.runStatus === "running",
+          output: resultState.output,
+          diagnostics: resultState.diagnostics.map((diagnostic) => ({
+            code: diagnostic.code,
+            message: diagnostic.message,
+            sourceSpan: diagnostic.source_span,
+          })),
+        };
+      }
       case "give_hint": {
         const lesson = activeLesson(state, lookup);
         const output = hint({
@@ -291,6 +450,13 @@ export function createVoiceTutorController(
   function handleSessionEvent(event: VoiceTutorEvent): void {
     switch (event.kind) {
       case "status":
+        if (event.status === "listening") updateGroundingNow();
+        if (
+          event.status === "listening" &&
+          (status === "speaking" || status === "thinking")
+        ) {
+          markTutorTranscriptInterrupted();
+        }
         if (event.status === "disconnected") enabled = false;
         setStatus(event.status === "disconnected" ? "off" : event.status);
         return;
@@ -317,11 +483,135 @@ export function createVoiceTutorController(
       next.lastRunResult !== lastGrounding.lastRunResult;
     lastGrounding = next;
     if (groundingChanged && enabled && options.session) {
-      void options.session
-        .updateGrounding(buildBrief(next, lookup, priorHintStage))
-        .catch(() => setStatus("error"));
+      deferGroundingUpdate();
     }
   });
+
+  async function setEnabled(nextEnabled: boolean): Promise<void> {
+    if (!options.session) {
+      setStatus("unavailable");
+      return;
+    }
+    enabled = nextEnabled;
+    publish();
+    if (!nextEnabled) {
+      listeningRequested = false;
+      cancelScheduledGroundingUpdate?.();
+      cancelScheduledGroundingUpdate = undefined;
+      await options.session.disconnect();
+      setStatus("off");
+      return;
+    }
+    setStatus("connecting");
+    try {
+      await options.session.setInteractionMode(interactionMode);
+      await options.session.updateGrounding(
+        buildBrief(options.state.getState(), lookup, priorHintStage),
+      );
+      await options.session.connect();
+      muted = interactionMode === "push-to-talk";
+      await options.session.setMuted(muted);
+      publish();
+    } catch (error) {
+      enabled = false;
+      setStatus(
+        error instanceof Error && error.message.includes("(503)")
+          ? "unavailable"
+          : "error",
+      );
+    }
+  }
+
+  async function setMuted(nextMuted: boolean): Promise<void> {
+    muted = nextMuted;
+    publish();
+    await options.session?.setMuted(nextMuted);
+  }
+
+  async function setInteractionMode(
+    nextInteractionMode: VoiceTutorInteractionMode,
+  ): Promise<void> {
+    interactionMode = nextInteractionMode;
+    muted = nextInteractionMode === "push-to-talk";
+    publish();
+    if (!options.session) return;
+    await options.session.setInteractionMode(nextInteractionMode);
+    if (enabled) await options.session.setMuted(muted);
+  }
+
+  async function startListening(): Promise<void> {
+    if (!options.session) {
+      setStatus("unavailable");
+      return;
+    }
+    listeningRequested = true;
+    if (!enabled) {
+      await setEnabled(true);
+    }
+    if (!listeningRequested || !enabled) {
+      return;
+    }
+    muted = false;
+    publish();
+    await options.session.startListening();
+  }
+
+  async function finishListening(): Promise<void> {
+    listeningRequested = false;
+    if (
+      !options.session ||
+      !enabled ||
+      interactionMode === "conversation" ||
+      status !== "listening"
+    ) {
+      return;
+    }
+    muted = interactionMode === "push-to-talk";
+    publish();
+    await options.session.finishListening();
+  }
+
+  async function cancelTurn(): Promise<void> {
+    listeningRequested = false;
+    if (!options.session || !enabled) {
+      return;
+    }
+    muted = true;
+    publish();
+    await options.session.cancelTurn();
+  }
+
+  async function stopTutor(): Promise<void> {
+    if (!options.session || !enabled) return;
+    markTutorTranscriptInterrupted();
+    await options.session.cancelResponse();
+    setStatus("ready");
+  }
+
+  async function requestFollowUp(instruction: string): Promise<void> {
+    if (!options.session || !enabled) return;
+    await options.session.requestResponse(instruction);
+  }
+
+  async function tellMeMore(): Promise<void> {
+    await requestFollowUp(
+      "Studio follow-up action: expand your most recent teaching point with one additional concise explanation or example. Stay on the same concept, do not advance the hint ladder, and do not provide a complete program.",
+    );
+  }
+
+  async function sayThatAgain(): Promise<void> {
+    await requestFollowUp(
+      "Studio follow-up action: restate your most recent completed answer more clearly and briefly. Do not add a new hint or new concept.",
+    );
+  }
+
+  async function giveAnotherHint(): Promise<void> {
+    if (!options.session || !enabled) return;
+    const result = await executeTool("give_hint", "{}");
+    await options.session.requestResponse(
+      `Studio follow-up action: voice exactly this next deterministic OpenLogo hint rung in natural child-friendly language. Do not reveal anything beyond it and do not call give_hint again. Hint result JSON: ${JSON.stringify(result)}`,
+    );
+  }
 
   return {
     getView,
@@ -329,45 +619,24 @@ export function createVoiceTutorController(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    async setEnabled(nextEnabled) {
-      if (!options.session) {
-        setStatus("unavailable");
-        return;
-      }
-      enabled = nextEnabled;
-      publish();
-      if (!nextEnabled) {
-        await options.session.disconnect();
-        setStatus("off");
-        return;
-      }
-      setStatus("connecting");
-      try {
-        await options.session.updateGrounding(
-          buildBrief(options.state.getState(), lookup, priorHintStage),
-        );
-        await options.session.connect();
-      } catch (error) {
-        enabled = false;
-        setStatus(
-          error instanceof Error && error.message.includes("(503)")
-            ? "unavailable"
-            : "error",
-        );
-      }
-    },
-    async setMuted(nextMuted) {
-      muted = nextMuted;
-      publish();
-      await options.session?.setMuted(nextMuted);
-    },
+    setEnabled,
+    setMuted,
+    setInteractionMode,
     async toggleEnabled() {
-      await this.setEnabled(!enabled);
+      await setEnabled(!enabled);
     },
     async toggleMuted() {
-      await this.setMuted(!muted);
+      await setMuted(!muted);
     },
+    startListening,
+    finishListening,
+    stopTutor,
+    cancelTurn,
+    tellMeMore,
+    sayThatAgain,
+    giveAnotherHint,
     async dispose() {
+      cancelScheduledGroundingUpdate?.();
       unsubscribeState();
       unsubscribeSession?.();
       await options.session?.disconnect();
