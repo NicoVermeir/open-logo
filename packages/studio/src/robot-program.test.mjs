@@ -25,6 +25,213 @@ function confirmPen(controls) {
   controls.confirmPenSettings();
 }
 
+test("180-degree turns apply clockwise lateral calibration without changing signed heading", async () => {
+  for (const [source, signedAngle, leftCorrectionMillimeters] of [
+    ["right 180", 180, 13.3],
+    ["left 180", -180, 0],
+    ["right -180", -180, 0],
+    ["left -180", 180, 13.3],
+    ["right 360 / 2", 180, 13.3],
+    ["left 360 / 2", -180, 0],
+  ]) {
+    for (const initialHeading of [0, 37, 211]) {
+      const state = createStudioState({
+        source: `pen_down\nforward 40\n${source}\nforward 40`,
+      });
+      const initialRadians = (initialHeading * Math.PI) / 180;
+      let horizontal =
+        26 * Math.cos(initialRadians) - 126 * Math.sin(initialRadians);
+      let vertical =
+        -126 * Math.cos(initialRadians) - 26 * Math.sin(initialRadians);
+      let heading = initialHeading;
+      let down = false;
+      const drawn = [];
+      const pens = [];
+      const tip = () => {
+        const radians = (heading * Math.PI) / 180;
+        return [
+          horizontal + 126 * Math.sin(radians) - 26 * Math.cos(radians),
+          vertical + 126 * Math.cos(radians) + 26 * Math.sin(radians),
+        ];
+      };
+      await executeRobotProgram(
+        {
+          connected: true,
+          async setPenDown(value) {
+            down = value;
+            pens.push(value);
+          },
+          async moveCentimeters(distance) {
+            const from = tip();
+            horizontal += distance * 10 * Math.sin((heading * Math.PI) / 180);
+            vertical += distance * 10 * Math.cos((heading * Math.PI) / 180);
+            if (down) drawn.push([from, tip()]);
+          },
+          async turnDegrees(amount) {
+            assert.equal(down, false);
+            heading += amount;
+          },
+        },
+        { state, penSettings, repaint() {}, cancelled: () => false },
+      );
+      const vertex = [
+        40 * Math.sin(initialRadians),
+        40 * Math.cos(initialRadians),
+      ];
+      const expectedCalibrationDisplacement = [
+        -leftCorrectionMillimeters * Math.cos(initialRadians),
+        leftCorrectionMillimeters * Math.sin(initialRadians),
+      ];
+      assert.ok(
+        Math.abs(heading - initialHeading - signedAngle) < 1e-8,
+        source,
+      );
+      assert.deepEqual(pens, [true, false, true]);
+      assert.equal(drawn.length, 2);
+      for (const coordinate of [0, 1]) {
+        assert.ok(Math.abs(drawn[0][0][coordinate]) < 1e-8, source);
+        assert.ok(
+          Math.abs(drawn[0][1][coordinate] - vertex[coordinate]) < 1e-8,
+          source,
+        );
+        assert.ok(
+          Math.abs(
+            drawn[1][0][coordinate] -
+              vertex[coordinate] -
+              expectedCalibrationDisplacement[coordinate],
+          ) < 1e-8,
+          source,
+        );
+        assert.ok(
+          Math.abs(
+            tip()[coordinate] - expectedCalibrationDisplacement[coordinate],
+          ) < 1e-8,
+          source,
+        );
+        assert.ok(
+          Math.abs(state.getState().turtleState.position[coordinate]) < 1e-8,
+          source,
+        );
+      }
+      assert.equal(state.getState().turtleState.heading, 180);
+      assert.equal(state.getState().turtleScene.items.length, 2);
+    }
+  }
+});
+
+test("360-degree turns apply signed calibration without repositioning and preserve pen intent", async () => {
+  for (const [source, physicalAngle] of [
+    ["right 360", 367],
+    ["left 360", -367],
+    ["right -360", -367],
+    ["left -360", 367],
+    ["right 180 * 2", 367],
+    ["left 720 / 2", -367],
+  ]) {
+    for (const penCommand of ["pen_down", "pen_up"]) {
+      const state = createStudioState({
+        source: `${penCommand}\nforward 40\n${source}\nforward 40`,
+      });
+      const commands = [];
+      let penDown = false;
+      await executeRobotProgram(
+        {
+          connected: true,
+          async setPenDown(value) {
+            penDown = value;
+            commands.push(["pen", value]);
+          },
+          async moveCentimeters(distance) {
+            commands.push(["move", distance]);
+          },
+          async turnDegrees(amount) {
+            assert.equal(penDown, false, source);
+            commands.push(["turn", amount]);
+          },
+        },
+        { state, penSettings, repaint() {}, cancelled: () => false },
+      );
+      const expectedPenDown = penCommand === "pen_down";
+      assert.deepEqual(
+        commands,
+        [
+          ["pen", expectedPenDown],
+          ["move", 4],
+          ["pen", false],
+          ["turn", physicalAngle],
+          ...(expectedPenDown ? [["pen", true]] : []),
+          ["move", 4],
+        ],
+        source,
+      );
+      assert.equal(penDown, expectedPenDown, source);
+      assert.deepEqual(state.getState().turtleState.position, [0, 80]);
+      assert.equal(state.getState().turtleState.heading, 0);
+      assert.equal(
+        state.getState().turtleScene.items.length,
+        expectedPenDown ? 2 : 0,
+      );
+    }
+  }
+});
+
+test("450-degree turns combine calibrated full and quarter turns while preserving pen intent", async () => {
+  for (const [source, direction] of [
+    ["right 450", 1],
+    ["left 450", -1],
+    ["right -450", -1],
+    ["left -450", 1],
+    ["right 900 / 2", 1],
+    ["left 360 + 90", -1],
+  ]) {
+    for (const penCommand of ["pen_down", "pen_up"]) {
+      const expectedPenDown = penCommand === "pen_down";
+      const calls = [];
+      let penDown = false;
+      const state = createStudioState({
+        source: `${penCommand}\nforward 40\n${source}\nforward 40`,
+      });
+      await executeRobotProgram(
+        {
+          connected: true,
+          async setPenDown(down) {
+            penDown = down;
+            calls.push(["pen", down]);
+          },
+          async moveCentimeters(distance) {
+            calls.push(["move", distance, penDown]);
+          },
+          async turnDegrees(angle) {
+            assert.equal(penDown, false);
+            calls.push(["turn", angle]);
+          },
+        },
+        { state, penSettings, repaint() {}, cancelled: () => false },
+      );
+      assert.deepEqual(calls, [
+        ["pen", expectedPenDown],
+        ["move", 4, expectedPenDown],
+        ["pen", false],
+        ["turn", direction * 367],
+        ["move", direction > 0 ? 10 : 15.2, false],
+        ["turn", direction * 90],
+        ["move", direction > 0 ? -15.2 : -10, false],
+        ...(expectedPenDown ? [["pen", true]] : []),
+        ["move", 4, expectedPenDown],
+      ]);
+      assert.equal(penDown, expectedPenDown);
+      const snapshot = state.getState();
+      assert.ok(
+        Math.abs(snapshot.turtleState.position[0] - direction * 40) < 1e-8,
+      );
+      assert.ok(Math.abs(snapshot.turtleState.position[1] - 40) < 1e-8);
+      assert.equal(snapshot.turtleState.heading, direction > 0 ? 90 : 270);
+      assert.equal(snapshot.turtleState.penDown, expectedPenDown);
+      assert.equal(snapshot.turtleScene.items.length, expectedPenDown ? 2 : 0);
+    }
+  }
+});
+
 test("left offset compensation returns the pen tip to the Logo vertex without drawing repositioning", async () => {
   for (const initialHeading of [0, 37, 211]) {
     for (const angle of [90, -90, 180, -270, 450, -450, 360, -360, 0, 20]) {
@@ -126,63 +333,73 @@ test("turn restoration follows the latest explicit pen command, never the virtua
 });
 
 test("every compensation acknowledgement gates the canvas and cancellation prevents subsequent commands", async () => {
-  const baseline = [];
-  await executeRobotProgram(
-    {
-      connected: true,
-      async setPenDown() {
-        baseline.push("pen");
-      },
-      async turnDegrees() {
-        baseline.push("turn");
-      },
-      async moveCentimeters() {
-        baseline.push("move");
-      },
-    },
-    {
-      state: createStudioState({ source: "pen_down\nright 90" }),
-      penSettings,
-      repaint() {},
-      cancelled: () => false,
-    },
-  );
-  for (const disconnect of [false, true]) {
-    for (let stopAt = 1; stopAt <= baseline.length; stopAt++) {
-      const state = createStudioState({ source: "pen_down\nright 90" });
-      let calls = 0;
-      let cancelled = false;
-      let release;
-      const command = async () => {
-        calls++;
-        if (calls === stopAt)
-          await new Promise((resolve) => {
-            release = resolve;
-          });
-      };
-      const robot = {
+  for (const source of [
+    "right 90",
+    "right 360",
+    "left 360",
+    "right 450",
+    "left 450",
+    "right -450",
+    "left -450",
+  ]) {
+    const baseline = [];
+    await executeRobotProgram(
+      {
         connected: true,
-        setPenDown: command,
-        turnDegrees: command,
-        moveCentimeters: command,
-      };
-      const run = executeRobotProgram(robot, {
-        state,
+        async setPenDown() {
+          baseline.push("pen");
+        },
+        async turnDegrees() {
+          baseline.push("turn");
+        },
+        async moveCentimeters() {
+          baseline.push("move");
+        },
+      },
+      {
+        state: createStudioState({ source: `pen_down\n${source}` }),
         penSettings,
         repaint() {},
-        cancelled: () => cancelled,
-      });
-      await nextTurn();
-      assert.equal(calls, stopAt);
-      assert.equal(state.getState().turtleState.heading, 0);
-      assert.deepEqual(state.getState().turtleState.position, [0, 0]);
-      assert.equal(state.getState().turtleScene.items.length, 0);
-      if (disconnect) robot.connected = false;
-      else cancelled = true;
-      release();
-      await assert.rejects(run, disconnect ? /disconnected/ : /stopped/);
-      assert.equal(calls, stopAt);
-      assert.equal(state.getState().turtleState.heading, 0);
+        cancelled: () => false,
+      },
+    );
+    for (const disconnect of [false, true]) {
+      for (let stopAt = 1; stopAt <= baseline.length; stopAt++) {
+        const state = createStudioState({ source: `pen_down\n${source}` });
+        let calls = 0;
+        let cancelled = false;
+        let release;
+        const command = async () => {
+          calls++;
+          if (calls === stopAt)
+            await new Promise((resolve) => {
+              release = resolve;
+            });
+        };
+        const robot = {
+          connected: true,
+          setPenDown: command,
+          turnDegrees: command,
+          moveCentimeters: command,
+        };
+        const run = executeRobotProgram(robot, {
+          state,
+          penSettings,
+          repaint() {},
+          cancelled: () => cancelled,
+        });
+        await nextTurn();
+        assert.equal(calls, stopAt);
+        assert.equal(state.getState().turtleState.heading, 0);
+        assert.deepEqual(state.getState().turtleState.position, [0, 0]);
+        assert.equal(state.getState().turtleScene.items.length, 0);
+        if (disconnect) robot.connected = false;
+        else cancelled = true;
+        release();
+        await assert.rejects(run, disconnect ? /disconnected/ : /stopped/);
+        assert.equal(calls, stopAt);
+        assert.equal(state.getState().turtleState.heading, 0);
+      }
     }
   }
 });
@@ -211,6 +428,43 @@ test("compensation and zero-distance commands count toward preflight before any 
       /500 motion segments/,
     );
     assert.equal(commands, 0);
+  }
+});
+
+test("450-degree plans include calibration and translations in the 500-segment budget", async () => {
+  for (const turnCommand of ["right", "left"]) {
+    for (const [distance, exceedsBudget] of [
+      [560, false],
+      [580, true],
+    ]) {
+      let commands = 0;
+      const command = async () => {
+        commands++;
+      };
+      const run = executeRobotProgram(
+        {
+          connected: true,
+          setPenDown: command,
+          moveCentimeters: command,
+          turnDegrees: command,
+        },
+        {
+          state: createStudioState({
+            source: `repeat 8 [ ${turnCommand} 450 ]\nforward ${distance}`,
+          }),
+          penSettings,
+          repaint() {},
+          cancelled: () => false,
+        },
+      );
+      if (exceedsBudget) {
+        await assert.rejects(run, /500 motion segments/);
+        assert.equal(commands, 0);
+      } else {
+        await run;
+        assert.equal(commands, 41);
+      }
+    }
   }
 });
 
@@ -325,7 +579,10 @@ test("right commands advance 105 mm, turn the evaluated angle, then reverse 138 
           ],
     );
     assert.deepEqual(state.getState().turtleState.position, [0, 0]);
-    assert.equal(state.getState().turtleState.heading, ((angle % 360) + 360) % 360);
+    assert.equal(
+      state.getState().turtleState.heading,
+      ((angle % 360) + 360) % 360,
+    );
     assert.equal(state.getState().turtleScene.items.length, 0);
   }
 });
@@ -492,11 +749,7 @@ test("calculated turns retain direction and complete rotations inside loops", as
     },
     { state, repaint() {}, cancelled: () => false },
   );
-  assert.equal(angles[0], 450);
-  assert.equal(angles.length, 6);
-  assert.ok(
-    Math.abs(angles.reduce((total, angle) => total + angle, 0) - 360) < 1e-8,
-  );
+  assert.deepEqual(angles, [367, 90, -270, 367, 90, -270]);
   assert.equal(state.getState().turtleState.heading, 0);
 });
 
@@ -547,13 +800,10 @@ left -20`);
     },
     { state, repaint() {}, cancelled: () => false },
   );
-  assert.equal(angles[0], -450);
-  assert.ok(
-    Math.abs(angles.reduce((total, angle) => total + angle, 0) + 340) < 1e-8,
-  );
+  assert.deepEqual(angles, [-367, -90, 90, 20]);
   assert.equal(state.getState().turtleState.heading, 20);
   const lastInstruction = spans.findIndex((span) => span.start[0] === 5);
-  assert.equal(lastInstruction, 2);
+  assert.equal(lastInstruction, 3);
   assert.ok(
     spans.slice(0, lastInstruction).every((span) => span.start[0] === 4),
   );
