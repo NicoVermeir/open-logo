@@ -124,7 +124,6 @@ export function createCameraRobotDemoController(
         const completed = await robotRunner.runOnRobot();
         if (cancelled()) return;
         if (!completed) throw new Error("Robot run did not complete.");
-        if (reportStatus) await reportStatus("Done");
         publish({ status: "succeeded", error: null });
       } catch (error) {
         if (cancelled()) return;

@@ -33,7 +33,7 @@ function simulateQuarterTurnUndertravel(commandedDegrees) {
   return commandedDegrees;
 }
 
-test("shows each learner motion command once before physical execution", async () => {
+test("shows the original program and active instruction before physical execution", async () => {
   const state = createStudioState({
     source: "pen_down\nforward 40\nright 90\npen_up",
   });
@@ -42,7 +42,8 @@ test("shows each learner motion command once before physical execution", async (
   await runRobotProgram(
     {
       connected: true,
-      showStatus: async (text) => calls.push(["screen", text]),
+      showProgram: async (source, span, showMarker = true) =>
+        calls.push(["screen", source, span.start, showMarker]),
       setPenDown: async (down) => calls.push(["pen", down]),
       moveCentimeters: async (distance) => calls.push(["move", distance]),
       turnDegrees: async (angle) => calls.push(["turn", angle]),
@@ -50,15 +51,206 @@ test("shows each learner motion command once before physical execution", async (
     { state, repaint() {}, cancelled: () => false },
   );
 
-  assert.deepEqual(
-    calls.filter(([kind]) => kind === "screen"),
-    [
-      ["screen", "pen_down"],
-      ["screen", "forward 40"],
-      ["screen", "right 90"],
-      ["screen", "pen_up"],
-    ],
+  assert.deepEqual(calls, [
+    ["screen", state.getState().source, [1, 1], true],
+    ["pen", true],
+    ["screen", state.getState().source, [2, 1], true],
+    ["move", 4],
+    ["screen", state.getState().source, [3, 1], true],
+    ["pen", false],
+    ["move", 10],
+    ["turn", 91],
+    ["move", -15.2],
+    ["pen", true],
+    ["screen", state.getState().source, [4, 1], true],
+    ["pen", false],
+    ["screen", state.getState().source, [4, 1], false],
+  ]);
+});
+
+test("program frames follow loop instructions using the source snapshot and take precedence over status", async () => {
+  const source =
+    ":distance = 10\nrepeat 2 [ print :distance forward :distance ]\nright 0";
+  const state = createStudioState({ source });
+  const calls = [];
+  await runRobotProgram(
+    {
+      connected: true,
+      showStatus: assert.fail,
+      async showProgram(displaySource, span, showMarker = true) {
+        assert.equal(displaySource, source);
+        calls.push(["screen", span.start, showMarker]);
+        state.setSource("forward 999");
+      },
+      moveCentimeters: async (distance) => calls.push(["move", distance]),
+      turnDegrees: assert.fail,
+    },
+    { state, repaint() {}, cancelled: () => false },
   );
+  assert.deepEqual(calls, [
+    ["screen", [1, 1], true],
+    ["screen", [2, 1], true],
+    ["screen", [2, 12], true],
+    ["screen", [2, 28], true],
+    ["move", 1],
+    ["screen", [2, 12], true],
+    ["screen", [2, 28], true],
+    ["move", 1],
+    ["screen", [3, 1], true],
+    ["screen", [3, 1], false],
+  ]);
+  assert.equal(state.getState().source, "forward 999");
+});
+
+test("empty programs replace the previous display with a marker-free frame", async (context) => {
+  const showProgram = context.mock.fn(async () => {});
+  await runRobotProgram(
+    { connected: true, showProgram },
+    {
+      state: createStudioState({ source: "" }),
+      repaint() {},
+      cancelled: () => false,
+    },
+  );
+  assert.deepEqual(
+    showProgram.mock.calls.map((call) => call.arguments),
+    [["", { document: "studio.logo", start: [1, 1], end: [1, 1] }, false]],
+  );
+});
+
+test("completion frames require acknowledgement and preserve stop, disconnect and failure handling", async () => {
+  for (const interruption of ["success", "failure", "stop", "disconnect"]) {
+    const source = "print 42";
+    const state = createStudioState({ source });
+    let acknowledgeScreen;
+    let rejectScreen;
+    let stops = 0;
+    let penRaises = 0;
+    const robot = {
+      connected: true,
+      deviceName: "test",
+      async stop() {
+        stops++;
+      },
+      async setPenDown(down) {
+        assert.equal(down, false);
+        penRaises++;
+      },
+      async showProgram(displaySource, span, showMarker = true) {
+        assert.equal(displaySource, source);
+        assert.deepEqual(span.start, [1, 1]);
+        if (!showMarker) {
+          await new Promise((resolve, reject) => {
+            acknowledgeScreen = resolve;
+            rejectScreen = reject;
+          });
+        }
+      },
+    };
+    const controls = createRobotControlPanelController(async () => robot);
+    await controls.connect();
+    confirmPen(controls);
+    const controller = createRobotRunController(
+      createRunController(state),
+      controls,
+      () => {},
+    );
+    const run = controller.runOnRobot();
+    await nextTurn();
+    assert.equal(state.getState().runStatus, "running");
+    assert.equal(controls.getView().busy, true);
+    assert.deepEqual(state.getState().output, ["42"]);
+    assert.equal(stops, 0);
+    if (interruption === "failure") {
+      rejectScreen(new Error("screen failed"));
+    } else {
+      if (interruption === "stop") await controls.stop();
+      if (interruption === "disconnect") robot.connected = false;
+      acknowledgeScreen();
+    }
+    assert.equal(await run, interruption === "success");
+    assert.equal(
+      state.getState().runStatus,
+      interruption === "success" ? "done" : "stopped",
+    );
+    assert.equal(state.getState().currentInstructionSourceSpan, null);
+    assert.equal(controls.getView().busy, false);
+    const cleanupCount = interruption === "disconnect" ? 0 : 1;
+    assert.equal(stops, cleanupCount + (interruption === "stop" ? 1 : 0));
+    assert.equal(penRaises, cleanupCount);
+    if (["failure", "disconnect"].includes(interruption)) {
+      assert.match(
+        state.getState().notice.message,
+        /screen failed|disconnected/,
+      );
+    } else {
+      assert.equal(state.getState().notice, null);
+    }
+  }
+});
+
+test("status-only robots retain command labels before physical effects", async () => {
+  const state = createStudioState({
+    source: "forward 10\nright 0\npen_up\n(right\n360)",
+  });
+  const calls = [];
+  await runRobotProgram(
+    {
+      connected: true,
+      showStatus: async (text) => calls.push(["screen", text]),
+      moveCentimeters: async (distance) => calls.push(["move", distance]),
+      setPenDown: async (down) => calls.push(["pen", down]),
+      turnDegrees: async (angle) => calls.push(["turn", angle]),
+    },
+    { state, repaint() {}, cancelled: () => false },
+  );
+  assert.deepEqual(calls, [
+    ["screen", "forward 10"],
+    ["move", 1],
+    ["screen", "pen_up"],
+    ["pen", false],
+    ["screen", "(right 360)"],
+    ["pen", false],
+    ["turn", 367],
+  ]);
+});
+
+test("a pending program frame cannot dispatch effects after failure, stop or disconnect", async () => {
+  for (const interruption of ["failure", "stop", "disconnect"]) {
+    const state = createStudioState({ source: "forward 40\nright 90" });
+    let acknowledgeScreen;
+    let rejectScreen;
+    let cancelled = false;
+    const screen = new Promise((resolve, reject) => {
+      acknowledgeScreen = resolve;
+      rejectScreen = reject;
+    });
+    const robot = {
+      connected: true,
+      showProgram: () => screen,
+      setPenDown: assert.fail,
+      moveCentimeters: assert.fail,
+      turnDegrees: assert.fail,
+    };
+    const run = runRobotProgram(robot, {
+      state,
+      repaint() {},
+      cancelled: () => cancelled,
+    });
+    const initialWorld = state.getState().turtleWorld;
+    const initialScene = state.getState().turtleScene;
+    const rejected = assert.rejects(run, /screen failed|stopped|disconnected/);
+    if (interruption === "failure") {
+      rejectScreen(new Error("screen failed"));
+    } else {
+      cancelled = interruption === "stop";
+      robot.connected = interruption !== "disconnect";
+      acknowledgeScreen();
+    }
+    await rejected;
+    assert.deepEqual(state.getState().turtleWorld, initialWorld);
+    assert.deepEqual(state.getState().turtleScene, initialScene);
+  }
 });
 
 test("polygon corners keep the offset pen on every virtual vertex", async () => {
@@ -717,7 +909,10 @@ test("robot runs only lower the pen for an executed pen_down command", async () 
 test("uncalibrated physical runs never send a command", async (context) => {
   const state = createStudioState({ source: "forward 10" });
   await assert.rejects(
-    executeRobotProgram({}, { state, repaint: context.mock.fn(), cancelled: context.mock.fn() }),
+    executeRobotProgram(
+      {},
+      { state, repaint: context.mock.fn(), cancelled: context.mock.fn() },
+    ),
     /calibration/,
   );
 });
@@ -1086,7 +1281,11 @@ test("shared run controls delegate while no robot program owns execution", async
   };
   const connect = context.mock.fn();
   const controls = createRobotControlPanelController(connect);
-  const controller = createRobotRunController(normal, controls, context.mock.fn());
+  const controller = createRobotRunController(
+    normal,
+    controls,
+    context.mock.fn(),
+  );
 
   controller.run();
   controller.step();
@@ -1137,7 +1336,10 @@ test("robot reset reports acknowledged stop failures", async () => {
       await nextTurn();
       assert.equal(state.getState().runStatus, "running");
       if (method === "resetRobot") {
-        await assert.rejects(controller.resetRobot(), (error) => error === failure);
+        await assert.rejects(
+          controller.resetRobot(),
+          (error) => error === failure,
+        );
       } else {
         assert.equal(controller.reset(), undefined);
         await nextTurn();
@@ -1255,11 +1457,13 @@ test("cancellation during the final repaint settles as stopped without losing ou
   const state = createStudioState({ source: "print 42" });
   const stop = context.mock.fn(async () => {});
   const setPenDown = context.mock.fn(async () => {});
+  const showProgram = context.mock.fn(async () => {});
   const controls = createRobotControlPanelController(async () => ({
     connected: true,
     deviceName: "test",
     stop,
     setPenDown,
+    showProgram,
   }));
   await controls.connect();
   confirmPen(controls);
@@ -1278,9 +1482,12 @@ test("cancellation during the final repaint settles as stopped without losing ou
   assert.ok(stopAcknowledgement instanceof Promise);
   await stopAcknowledgement;
   assert.equal(stop.mock.callCount(), 2);
-  assert.deepEqual(setPenDown.mock.calls.map((call) => call.arguments), [
-    [false, penSettings],
-  ]);
+  assert.equal(showProgram.mock.callCount(), 1);
+  assert.equal(showProgram.mock.calls[0].arguments.length, 2);
+  assert.deepEqual(
+    setPenDown.mock.calls.map((call) => call.arguments),
+    [[false, penSettings]],
+  );
   assert.equal(controls.getView().busy, false);
   const snapshot = state.getState();
   assert.equal(snapshot.runStatus, "stopped");
@@ -1447,7 +1654,8 @@ test("a run handoff without calibration fails before hardware commands", async (
   const controller = createRobotRunController(
     createRunController(state),
     {
-      runProgram: (program) => program({ connected: true, moveCentimeters: command }, () => false),
+      runProgram: (program) =>
+        program({ connected: true, moveCentimeters: command }, () => false),
     },
     context.mock.fn(),
   );

@@ -1,3 +1,4 @@
+import type { SourceSpan } from "@openlogo/core";
 import type { MBot2WebBluetoothTransport } from "./mbot2-web-bluetooth.js";
 
 export const MBOT2_MINIMUM_SPEED = 10;
@@ -6,6 +7,11 @@ export const MBOT2_MINIMUM_DURATION_SECONDS = 0.1;
 export const MBOT2_MAXIMUM_DURATION_SECONDS = 2;
 export const MBOT2_MAXIMUM_STRAIGHT_SEGMENT_CENTIMETERS = 2;
 export const MBOT2_MAXIMUM_TURN_SEGMENT_DEGREES = 10;
+
+const ROBOT_SCREEN_WIDTH = 128;
+const ROBOT_SCREEN_HEIGHT = 128;
+const ROBOT_CODE_FONT_SIZE = 16;
+const ROBOT_CODE_ROWS = 7;
 
 export interface RobotPenSettings {
   downAngle: number;
@@ -65,6 +71,11 @@ export interface MBot2ManualRobot {
   readonly deviceName: string;
   readonly connected: boolean;
   showStatus?(text: string): Promise<void>;
+  showProgram?(
+    source: string,
+    currentInstruction: SourceSpan,
+    showMarker?: boolean,
+  ): Promise<void>;
   isPlayButtonPressed?(): Promise<boolean>;
   forward(speed: number, durationSeconds: number): Promise<void>;
   backward(speed: number, durationSeconds: number): Promise<void>;
@@ -153,6 +164,18 @@ export function createMBot2ManualRobot(
       if (response !== 1)
         throw new Error("Robot screen update was not acknowledged.");
     },
+    showProgram: async (source, currentInstruction, showMarker = true) => {
+      if (!transport.connected) throw new Error("The robot disconnected.");
+      const rows = robotProgramRows(source, currentInstruction, showMarker);
+      const top =
+        (ROBOT_SCREEN_HEIGHT - ROBOT_CODE_ROWS * ROBOT_CODE_FONT_SIZE) / 2;
+      const response = await transport.evaluate(
+        `(cyberpi.display.clear(),cyberpi.display.show_label(${JSON.stringify(rows.join("\n"))},${ROBOT_CODE_FONT_SIZE},0,${top},0),1)[2]`,
+      );
+      if (response !== 1)
+        throw new Error("Robot screen update was not acknowledged.");
+      if (!transport.connected) throw new Error("The robot disconnected.");
+    },
     forward: (speed, durationSeconds) =>
       move("forward", speed, durationSeconds),
     backward: (speed, durationSeconds) =>
@@ -191,6 +214,48 @@ export function createMBot2ManualRobot(
     distance: () => evaluateNumber(transport, "cyberpi.ultrasonic2.get(1)"),
     disconnect: () => transport.disconnect(),
   };
+}
+
+function robotProgramRows(
+  source: string,
+  currentInstruction: SourceSpan,
+  showMarker: boolean,
+): string[] {
+  const rows: string[] = [];
+  let activeRow = 0;
+  for (const [lineIndex, line] of source.split(/\r\n?|\n/).entries()) {
+    let row = "";
+    let width = 0;
+    let column = 1;
+    for (const character of line) {
+      const active =
+        lineIndex + 1 === currentInstruction.start[0] &&
+        column === currentInstruction.start[1];
+      const text = character === "\t" ? "  " : character;
+      const characterWidth =
+        character === "\t" || character.codePointAt(0)! > 127
+          ? ROBOT_CODE_FONT_SIZE
+          : ROBOT_CODE_FONT_SIZE / 2;
+      const markedWidth =
+        characterWidth + (active ? ROBOT_CODE_FONT_SIZE / 2 : 0);
+      if (width + markedWidth > ROBOT_SCREEN_WIDTH) {
+        rows.push(row);
+        row = "";
+        width = 0;
+      }
+      if (active) activeRow = rows.length;
+      row += (active ? (showMarker ? ">" : " ") : "") + text;
+      width += markedWidth;
+      column += character.length;
+    }
+    rows.push(row);
+  }
+  if (rows.length <= ROBOT_CODE_ROWS) return rows;
+  const firstRow = activeRow - Math.floor(ROBOT_CODE_ROWS / 2);
+  return Array.from(
+    { length: ROBOT_CODE_ROWS },
+    (_, index) => rows[firstRow + index] ?? "",
+  );
 }
 
 async function acknowledgedMotion(

@@ -220,12 +220,13 @@ export async function runRobotProgram(
     ]!.slice(0, endColumn - (startLine === endLine ? startColumn : 1));
     return commandLines.join(" ").replaceAll(/\s+/g, " ").trim();
   };
-  const showCommand = robot.showStatus
-    ? async (event: TraceEvent): Promise<void> => {
-        await robot.showStatus!(sourceCommand(event.source_span));
-        checkActive();
-      }
-    : undefined;
+  const showCommand =
+    robot.showStatus && !robot.showProgram
+      ? async (event: TraceEvent): Promise<void> => {
+          await robot.showStatus!(sourceCommand(event.source_span));
+          checkActive();
+        }
+      : undefined;
   const apply = (event: TraceEvent): void => {
     state.setTurtleWorld(
       reduceTurtleWorldState(state.getState().turtleWorld, event),
@@ -235,12 +236,23 @@ export async function runRobotProgram(
     );
   };
   let programPenDown = false;
+  let lastInstructionSpan: SourceSpan = {
+    document: "studio.logo",
+    start: [1, 1],
+    end: [1, 1],
+  };
   checkActive();
   for (let index = 0; index < events.length; index++) {
     checkActive();
     const event = events[index]!;
-    if (event.kind === "instruction")
+    if (event.kind === "instruction") {
+      lastInstructionSpan = event.source_span;
       state.setCurrentInstructionSourceSpan(event.source_span);
+      if (robot.showProgram) {
+        await robot.showProgram(source, event.source_span);
+        checkActive();
+      }
+    }
     if (event.kind === "turn") {
       const plan = turnPlans.get(event.seq)!;
       if (plan.length > 0) {
@@ -295,6 +307,11 @@ export async function runRobotProgram(
         ]);
       repaint();
     }
+  }
+  if (robot.showProgram) {
+    checkActive();
+    await robot.showProgram(source, lastInstructionSpan, false);
+    checkActive();
   }
 }
 

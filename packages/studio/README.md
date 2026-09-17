@@ -119,6 +119,16 @@ after the complete pen-offset maneuver and any pen restoration. Hidden repositio
 the canvas. Playback does not use a separate animation timer.
 This is command synchronization, not measured position telemetry; wheel slip is not corrected.
 
+The CyberPi screen shows the original program with `>` immediately before the active instruction,
+including inline loop bodies. Short programs remain fully visible; long lines wrap, and programs
+exceeding seven display rows scroll around the active instruction, keeping its row vertically centered
+with blank padding at either end. Each frame uses one multiline label and is acknowledged before its instruction's effects run;
+generated turn wrappers never appear. After successful instruction playback, the last viewport stays on screen
+with the active marker replaced by a space, preserving wrapping and scrolling. Camera-triggered runs retain
+this frame too, without replacing it with a **Done** message. Stop and error feedback are unchanged.
+The layout targets a 128-by-128 screen using 16-pixel text (8-pixel ASCII glyphs);
+font metrics, non-ASCII glyphs, and label placement still require validation on the target firmware.
+
 The initial supported commands are `forward`, `back`, `left`, `right`, `pen_up`, `pen_down`,
 `print`, `set_color`, `set_width`, `set_background`, `show_turtle`, and `hide_turtle`. Core loops,
 procedures, and distance and turn expressions work through the existing parser/runtime, including

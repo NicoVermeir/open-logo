@@ -263,6 +263,162 @@ test("returns no reading for non-numeric sensor responses", async () => {
   assert.equal(await robot.battery(), undefined);
 });
 
+function screenRows(expression) {
+  const labels = [
+    ...expression.matchAll(
+      /cyberpi\.display\.show_label\(("(?:\\.|[^"\\])*"),16,0,(\d+),0\)/g,
+    ),
+  ];
+  assert.equal(labels.length, 1);
+  const [, text, top] = labels[0];
+  return JSON.parse(text)
+    .split("\n")
+    .map((row, index) => ({
+      text: row,
+      top: Number(top) + index * 16,
+      index,
+    }));
+}
+
+test("shows the complete short program with an instruction marker and fixed row positions", async () => {
+  const fake = createTransport();
+  const robot = createMBot2ManualRobot(fake.transport);
+  await robot.showProgram("pen_down\nforward 40\nright 90\npen_up", {
+    start: [2, 1],
+    end: [2, 11],
+  });
+  assert.deepEqual(screenRows(fake.expressions[0]), [
+    { text: "pen_down", top: 8, index: 0 },
+    { text: ">forward 40", top: 24, index: 1 },
+    { text: "right 90", top: 40, index: 2 },
+    { text: "pen_up", top: 56, index: 3 },
+  ]);
+  assert.equal(
+    fake.expressions[0],
+    '(cyberpi.display.clear(),cyberpi.display.show_label("pen_down\\n>forward 40\\nright 90\\npen_up",16,0,8,0),1)[2]',
+  );
+  assert.equal(fake.expressions.length, 1);
+});
+
+test("centers the active instruction in overflowing code including both ends", async () => {
+  const fake = createTransport();
+  const robot = createMBot2ManualRobot(fake.transport);
+  const source = Array.from(
+    { length: 10 },
+    (_, index) => `forward ${index + 1}`,
+  ).join("\n");
+  for (const line of [1, 5, 10]) {
+    await robot.showProgram(source, { start: [line, 1], end: [line, 10] });
+  }
+  const rows = fake.expressions.map((expression) => screenRows(expression));
+  assert.deepEqual(
+    rows.map((frame) => frame.map(({ text }) => text)),
+    [
+      ["", "", "", ">forward 1", "forward 2", "forward 3", "forward 4"],
+      [
+        "forward 2",
+        "forward 3",
+        "forward 4",
+        ">forward 5",
+        "forward 6",
+        "forward 7",
+        "forward 8",
+      ],
+      ["forward 7", "forward 8", "forward 9", ">forward 10", "", "", ""],
+    ],
+  );
+  for (const frame of rows) {
+    assert.equal(frame.length, 7);
+    assert.deepEqual(frame[3], { text: frame[3].text, top: 56, index: 3 });
+  }
+});
+
+test("finished program frames clear only the marker and preserve the viewport", async () => {
+  const fake = createTransport();
+  const robot = createMBot2ManualRobot(fake.transport);
+  for (const [source, start] of [
+    ['print ">"\nforward 40', [2, 1]],
+    ["repeat 4 [ forward 40 right 90 ]", [1, 23]],
+    ["               forward 1", [1, 16]],
+    [
+      Array.from({ length: 10 }, (_, index) => `forward ${index + 1}`).join(
+        "\n",
+      ),
+      [10, 1],
+    ],
+    ["", [1, 1]],
+  ]) {
+    const span = { start, end: start };
+    await robot.showProgram(source, span);
+    await robot.showProgram(source, span, false);
+    const active = screenRows(fake.expressions.at(-2));
+    const finished = screenRows(fake.expressions.at(-1));
+    assert.deepEqual(
+      finished,
+      active.map((row) => ({
+        ...row,
+        text: row.text
+          .replace(">forward", " forward")
+          .replace(">right", " right"),
+      })),
+    );
+  }
+});
+
+test("wraps long inline code and keeps the marker with its instruction", async () => {
+  const fake = createTransport();
+  const robot = createMBot2ManualRobot(fake.transport);
+  const source = "repeat 4 [ forward 40 right 90 ]";
+  await robot.showProgram(source, { start: [1, 23], end: [1, 31] });
+  assert.deepEqual(
+    screenRows(fake.expressions[0]).map(({ text }) => text),
+    ["repeat 4 [ forwa", "rd 40 >right 90 ", "]"],
+  );
+  await robot.showProgram("               forward 1", {
+    start: [1, 16],
+    end: [1, 25],
+  });
+  assert.deepEqual(
+    screenRows(fake.expressions[1]).map(({ text }) => text),
+    ["               ", ">forward 1"],
+  );
+});
+
+test("preserves blank lines, expands tabs and escapes source as display data", async () => {
+  const fake = createTransport();
+  const robot = createMBot2ManualRobot(fake.transport);
+  const source = '\tprint "hello"\r\n\r\nforward 1\n';
+  await robot.showProgram(source, { start: [1, 2], end: [1, 15] });
+  assert.deepEqual(
+    screenRows(fake.expressions[0]).map(({ text }) => text),
+    ['  >print "hello"', "", "forward 1", ""],
+  );
+  await robot.showProgram('print "\\",1)[0]', { start: [1, 1], end: [1, 16] });
+  assert.equal(
+    screenRows(fake.expressions[1])
+      .map(({ text }) => text)
+      .join(""),
+    '>print "\\",1)[0]',
+  );
+});
+
+test("program display rejects unacknowledged and disconnected updates", async () => {
+  const fake = createTransport();
+  const robot = createMBot2ManualRobot(fake.transport);
+  const span = { start: [1, 1], end: [1, 10] };
+  fake.transport.evaluate = async () => undefined;
+  await assert.rejects(
+    robot.showProgram("forward 1", span),
+    /not acknowledged/,
+  );
+  fake.transport.evaluate = async () => {
+    fake.transport.disconnect();
+    return 1;
+  };
+  await assert.rejects(robot.showProgram("forward 1", span), /disconnected/);
+  await assert.rejects(robot.showProgram("forward 1", span), /disconnected/);
+});
+
 test("precise movement waits for a robot response and rejects missing acknowledgements", async () => {
   const fake = createTransport();
   const timeouts = [];

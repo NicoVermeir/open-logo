@@ -10,7 +10,7 @@ const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
 const frameSource = (captureFrame) => ({ captureFrame, cancelCapture: noOp });
 const robotRunner = (runOnRobot) => ({ runOnRobot, reset: async () => {} });
 
-test("captures, recognizes, and runs the generated program in order", async () => {
+test("captures, recognizes, and runs without overwriting the completed program display", async () => {
   const calls = [];
   const states = [];
   const controller = createCameraRobotDemoController(
@@ -45,7 +45,6 @@ test("captures, recognizes, and runs the generated program in order", async () =
     "recognize",
     "screen:Running",
     "run",
-    "screen:Done",
   ]);
   assert.deepEqual(states, [
     "capturing",
@@ -409,9 +408,12 @@ test("cancellation reports robot reset failures and permits a retry", async () =
 test("cancellation reports a fallback for non-Error reset failures", async () => {
   let rejectCapture;
   const controller = createCameraRobotDemoController(
-    frameSource(() => new Promise((_resolve, reject) => {
-      rejectCapture = reject;
-    })),
+    frameSource(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectCapture = reject;
+        }),
+    ),
     {
       getState: () => ({ error: null }),
       importImage: async () => result,
@@ -428,7 +430,10 @@ test("cancellation reports a fallback for non-Error reset failures", async () =>
   );
 
   const run = controller.run();
-  await assert.rejects(controller.cancel(), (error) => error === "reset failed");
+  await assert.rejects(
+    controller.cancel(),
+    (error) => error === "reset failed",
+  );
   rejectCapture(new Error("Capture cancelled."));
   await run;
   assert.deepEqual(controller.getState(), {

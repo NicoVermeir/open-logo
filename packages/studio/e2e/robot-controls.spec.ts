@@ -163,6 +163,10 @@ async function installMBot2BluetoothMock(
   }, options);
 }
 
+function programFrame(rows: readonly string[]): string {
+  return `(cyberpi.display.clear(),cyberpi.display.show_label(${JSON.stringify(rows.join("\n"))},16,0,8,0),1)[2]`;
+}
+
 async function samplePlayButton(page: Page, pressed: boolean): Promise<void> {
   const before = await page.evaluate((value) => {
     const mock = globalThis.robotBluetoothMock!;
@@ -278,8 +282,9 @@ test("default pen settings allow forward 20 after manual pen commands without li
   ).toEqual([
     "(mbot2.servo_set(115,3),1)[1]",
     "(mbot2.servo_set(90,3),1)[1]",
-    '(cyberpi.display.clear(),cyberpi.display.show_label("forward 20",16,0,40,0),1)[2]',
+    programFrame([">forward 20"]),
     "(mbot2.straight(2,speed=30),1)[1]",
+    programFrame([" forward 20"]),
     "(mbot2.EM_stop(),1)[1]",
     "(mbot2.servo_set(115,3),1)[1]",
   ]);
@@ -287,20 +292,21 @@ test("default pen settings allow forward 20 after manual pen commands without li
   await runButton.click();
   await expect(runButton).toBeEnabled();
   expect(
-    await page.evaluate(() => globalThis.robotBluetoothMock?.scripts.slice(6)),
+    await page.evaluate(() => globalThis.robotBluetoothMock?.scripts.slice(7)),
   ).toEqual([
-    '(cyberpi.display.clear(),cyberpi.display.show_label("pen_down",16,0,40,0),1)[2]',
+    programFrame([">pen_down", "forward 20", "pen_up"]),
     "(mbot2.servo_set(90,3),1)[1]",
-    '(cyberpi.display.clear(),cyberpi.display.show_label("forward 20",16,0,40,0),1)[2]',
+    programFrame(["pen_down", ">forward 20", "pen_up"]),
     "(mbot2.straight(2,speed=30),1)[1]",
-    '(cyberpi.display.clear(),cyberpi.display.show_label("pen_up",16,0,40,0),1)[2]',
+    programFrame(["pen_down", "forward 20", ">pen_up"]),
     "(mbot2.servo_set(115,3),1)[1]",
+    programFrame(["pen_down", "forward 20", " pen_up"]),
     "(mbot2.EM_stop(),1)[1]",
     "(mbot2.servo_set(115,3),1)[1]",
   ]);
 });
 
-test("Run on turtlebot sends whole motion phases with command labels and updates the virtual turtle", async ({
+test("Run on turtlebot shows every instruction with whole motion phases and updates the virtual turtle", async ({
   page,
 }) => {
   await installMBot2BluetoothMock(page);
@@ -327,13 +333,46 @@ test("Run on turtlebot sends whole motion phases with command labels and updates
     () => globalThis.robotBluetoothMock?.scripts ?? [],
   );
   expect(scripts.slice(0, -2)).toEqual([
-    '(cyberpi.display.clear(),cyberpi.display.show_label("forward 40",16,0,40,0),1)[2]',
+    programFrame([
+      ">:sides = 18",
+      "forward 40",
+      "right 360 / :sid",
+      "es",
+      "print 42",
+    ]),
+    programFrame([
+      ":sides = 18",
+      ">forward 40",
+      "right 360 / :sid",
+      "es",
+      "print 42",
+    ]),
     "(mbot2.straight(4,speed=30),1)[1]",
-    '(cyberpi.display.clear(),cyberpi.display.show_label("right 360 / :sides",16,0,40,0),1)[2]',
+    programFrame([
+      ":sides = 18",
+      "forward 40",
+      ">right 360 / :si",
+      "des",
+      "print 42",
+    ]),
     "(mbot2.servo_set(90,3),1)[1]",
     "(mbot2.straight(12.14154985015799,speed=30),1)[1]",
     "(mbot2.turn(20,speed=30),1)[1]",
     "(mbot2.straight(-13.058450149842008,speed=30),1)[1]",
+    programFrame([
+      ":sides = 18",
+      "forward 40",
+      "right 360 / :sid",
+      "es",
+      ">print 42",
+    ]),
+    programFrame([
+      ":sides = 18",
+      "forward 40",
+      "right 360 / :sid",
+      "es",
+      " print 42",
+    ]),
   ]);
   expect(scripts.slice(-2)).toEqual([
     "(mbot2.EM_stop(),1)[1]",
@@ -444,14 +483,14 @@ for (const trigger of ["screen", "robot"] as const) {
       '(cyberpi.display.clear(),cyberpi.display.show_label("Taking photo",16,0,40,0),1)[2]',
       '(cyberpi.display.clear(),cyberpi.display.show_label("Reading board",16,0,40,0),1)[2]',
       '(cyberpi.display.clear(),cyberpi.display.show_label("Running",16,0,40,0),1)[2]',
-      '(cyberpi.display.clear(),cyberpi.display.show_label("forward 100",16,0,40,0),1)[2]',
+      programFrame([">forward 100", "right 360"]),
       "(mbot2.straight(10,speed=30),1)[1]",
-      '(cyberpi.display.clear(),cyberpi.display.show_label("right 360",16,0,40,0),1)[2]',
+      programFrame(["forward 100", ">right 360"]),
       "(mbot2.servo_set(90,3),1)[1]",
       "(mbot2.turn(367,speed=30),1)[1]",
+      programFrame(["forward 100", " right 360"]),
       "(mbot2.EM_stop(),1)[1]",
       "(mbot2.servo_set(90,3),1)[1]",
-      '(cyberpi.display.clear(),cyberpi.display.show_label("Done",16,0,40,0),1)[2]',
     ]);
     await expect(page.locator("#turtle-state")).toContainText(
       "x 0 y 100 heading 0",
@@ -560,7 +599,7 @@ test("Run on turtlebot waits for acknowledgement and reset blocks late playback"
   await expect
     .poll(() => page.evaluate(() => globalThis.robotBluetoothMock?.scripts))
     .toEqual([
-      '(cyberpi.display.clear(),cyberpi.display.show_label("forward 40",16,0,40,0),1)[2]',
+      programFrame([">forward 40"]),
       "(mbot2.straight(4,speed=30),1)[1]",
     ]);
   await expect(
