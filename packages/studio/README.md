@@ -21,7 +21,20 @@ locally and delegates recognition to an injected `@openlogo/board-reader` LLM pr
 **Camera to turtlebot** demo action captures one camera frame, imports the recognized program into
 the editor, and runs it through the same robot preflight and execution path as **Run on turtlebot**.
 The demo action is enabled only after the robot is connected and pen calibration is confirmed;
-camera or recognition failures stop the sequence before robot execution. During
+camera or recognition failures stop the sequence before robot execution.
+
+The physical-button shortcut currently reads **CyberPi B** (`cyberpi.controller.is_press('b')`).
+The triangle/play icon's mapping to B still needs confirmation on the target robot.
+With Studio open in a visible tab, Bluetooth connected, pen calibration confirmed, and camera
+permission and board recognition configured, release the button and then press it to start the same
+camera-to-robot sequence. The camera is attached to the browser device, not the robot; this is not
+standalone robot firmware. Holding the button starts only one run. Release it after completion
+before pressing again. Button reads are serialized and sampled every 250 ms while idle, so a very
+brief tap can be missed. Polling pauses during capture, import, and execution, and when the tab is
+hidden. Stop, Reset, disconnect, and other busy actions discard pending presses and require a new
+sampled release before another run. This does not change the firmware's Stop latency described below.
+
+During
 Vite development, the built-in `/api/recognize-board` proxy reads `packages/studio/.env.local`,
 keeps its short-lived Entra token server-side, and forwards requests to an OpenAI-compatible vision endpoint.
 
@@ -30,7 +43,7 @@ run `az login`. The proxy obtains a short-lived Microsoft Entra token with
 `az account get-access-token`; no API key is read or stored. Set `OPENLOGO_AZURE_TENANT_ID` when
 the current Azure CLI tenant is not the Foundry tenant. Generated source is placed in the editor
 but is never executed automatically by the regular image-import action. The camera demo action is
-the deliberate one-click exception. The proxy is a development-server integration; production
+the deliberate exception, started on screen or by the physical-button shortcut. The proxy is a development-server integration; production
 deployments need the same `/api/recognize-board` contract hosted by their backend.
 
 ## mBot2 manual controls

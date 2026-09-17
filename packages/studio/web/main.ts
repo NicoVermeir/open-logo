@@ -104,7 +104,6 @@ import {
 } from "../src/index.js";
 import type {
   BoardImportState,
-  BoardRecognitionProvider,
   CameraRobotDemoState,
   DiagnosticListItem,
   Canvas2DContext,
@@ -123,6 +122,7 @@ import { parseBoardRecognitionResponse } from "../src/index.js";
 import { createMBot2BrowserConnector } from "./mbot2-browser.js";
 import {
   createLlmBoardRecognitionProvider,
+  type BoardRecognitionProvider,
   type LlmBoardRecognitionClient,
   type RasterImage,
 } from "@openlogo/board-reader";
@@ -423,6 +423,17 @@ let boardImageDecodeActive = false;
 let boardRecognitionActive = false;
 let boardImportRevision = 0;
 
+function canRunCameraRobotDemo(view = robotControls.getView()): boolean {
+  return (
+    !cameraRobotDemoActive &&
+    !boardImportActive &&
+    !view.busy &&
+    view.status === "connected" &&
+    state.getState().runStatus !== "running" &&
+    view.penConfirmed
+  );
+}
+
 function renderRobotControls(view: RobotControlPanelView): void {
   const connected = view.status === "connected";
   const robotOwned = view.robotOwned;
@@ -435,13 +446,8 @@ function renderRobotControls(view: RobotControlPanelView): void {
     !connected ||
     executionLocked ||
     !view.penConfirmed;
-  cameraRobotDemoButton.disabled =
-    cameraRobotDemoActive ||
-    boardImportActive ||
-    view.busy ||
-    !connected ||
-    executionLocked ||
-    !view.penConfirmed;
+  cameraRobotDemoButton.disabled = !canRunCameraRobotDemo(view);
+  if (cameraRobotDemoButton.disabled) robotControls.resetPlayButton();
   const penLocked = view.busy || !connected || executionLocked;
   for (const input of Object.values(penInputs)) input.disabled = penLocked;
   for (const button of Object.values(penButtons)) button.disabled = penLocked;
@@ -522,6 +528,7 @@ robotElements.right.addEventListener(
   () => void robotControls.move("right"),
 );
 robotElements.stop.addEventListener("click", () => {
+  robotControls.resetPlayButton();
   void cameraRobotDemoController
     .cancel()
     .then((cancelledCameraDemo) =>
@@ -540,6 +547,8 @@ robotElements.duration.addEventListener("change", () =>
   robotControls.setDuration(Number(robotElements.duration.value)),
 );
 window.addEventListener("beforeunload", () => {
+  window.clearInterval(playButtonPollInterval);
+  robotControls.resetPlayButton();
   void cameraRobotDemoController
     .cancel()
     .catch(() => undefined)
@@ -593,6 +602,9 @@ function createDevProxyBoardRecognitionClient(): LlmBoardRecognitionClient {
   return {
     name: "dev-proxy",
     async recognize(request, signal) {
+      if (signal !== undefined && !(signal instanceof AbortSignal)) {
+        throw new Error("Board recognition requires a browser AbortSignal.");
+      }
       const response = await fetch("/api/recognize-board", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -971,20 +983,28 @@ const cameraRobotDemoController = createCameraRobotDemoController(
     reportStatus: (text) => robotControls.showStatus(text),
   },
 );
-cameraRobotDemoButton.addEventListener(
-  "click",
-  () => void cameraRobotDemoController.run(),
+function runCameraRobotDemo(): void {
+  if (canRunCameraRobotDemo()) void cameraRobotDemoController.run();
+}
+cameraRobotDemoButton.addEventListener("click", runCameraRobotDemo);
+const playButtonPollInterval = window.setInterval(() => {
+  void robotControls.pollPlayButton(
+    runCameraRobotDemo,
+    () => document.visibilityState === "visible" && canRunCameraRobotDemo(),
+  );
+}, 250);
+document.addEventListener("visibilitychange", () =>
+  robotControls.resetPlayButton(),
 );
 mountRunController(shell, runController);
 
 let cameraCaptureRevision = 0;
-let activeCameraCapture:
-  | {
-      stream: MediaStream | null;
-      video: HTMLVideoElement | null;
-      rejectCancellation(error: Error): void;
-    }
-  | undefined;
+interface CameraCapture {
+  stream: MediaStream | null;
+  video: HTMLVideoElement | null;
+  rejectCancellation(error: Error): void;
+}
+let activeCameraCapture: CameraCapture | undefined;
 
 function cancelCameraCapture(): void {
   cameraCaptureRevision++;
@@ -1004,7 +1024,7 @@ async function captureCameraFrame(): Promise<RasterImage> {
   const cancellation = new Promise<never>((_resolve, reject) => {
     rejectCancellation = reject;
   });
-  const capture = {
+  const capture: CameraCapture = {
     stream: null,
     video: null,
     rejectCancellation,
@@ -1147,6 +1167,7 @@ runToggleButton.addEventListener("click", () => {
   runToggleActionHandlers[action]();
 });
 resetButton.addEventListener("click", () => {
+  robotControls.resetPlayButton();
   boardImportRevision++;
   boardImageSelectionActive = false;
   boardImageDecodeActive = false;

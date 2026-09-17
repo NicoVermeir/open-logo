@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createRobotControlPanelController } from "@openlogo/studio";
 
-const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
-
 function createRobot() {
   const calls = [];
   return {
@@ -24,6 +22,173 @@ function createRobot() {
     },
   };
 }
+
+test("play button requires calibration and a release, ignores holds, and rearms after idle", async () => {
+  const fake = createRobot();
+  let pressed = true;
+  let reads = 0;
+  let runs = 0;
+  let enabled = true;
+  let locked = false;
+  fake.robot.isPlayButtonPressed = async () => {
+    reads++;
+    return pressed;
+  };
+  const controller = createRobotControlPanelController(
+    async () => fake.robot,
+    () => locked,
+  );
+  const poll = () =>
+    controller.pollPlayButton(
+      () => {
+        runs++;
+      },
+      () => enabled,
+    );
+  await poll();
+  await controller.connect();
+  await poll();
+  assert.equal(reads, 0);
+  controller.confirmPenSettings();
+  await poll();
+  assert.equal(runs, 0);
+  pressed = false;
+  await poll();
+  pressed = true;
+  await poll();
+  await poll();
+  assert.equal(runs, 1);
+  for (const block of ["disabled", "locked", "disconnected"]) {
+    pressed = false;
+    await poll();
+    const before = reads;
+    enabled = block !== "disabled";
+    locked = block === "locked";
+    fake.robot.connected = block !== "disconnected";
+    pressed = true;
+    await poll();
+    assert.equal(reads, before);
+    enabled = true;
+    locked = false;
+    fake.robot.connected = true;
+    await poll();
+    assert.equal(runs, 1);
+  }
+  pressed = false;
+  await poll();
+  pressed = true;
+  await poll();
+  assert.equal(runs, 2);
+  await controller.dispose();
+  const before = reads;
+  await poll();
+  assert.equal(reads, before);
+});
+
+test("play button skips overlapping polls and discards stale reads and errors", async () => {
+  const fake = createRobot();
+  let pressed = false;
+  let runs = 0;
+  let enabled = true;
+  fake.robot.isPlayButtonPressed = async () => pressed;
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  const poll = () =>
+    controller.pollPlayButton(
+      () => {
+        runs++;
+      },
+      () => enabled,
+    );
+  await controller.connect();
+  controller.confirmPenSettings();
+  for (const interruption of [
+    "stop",
+    "disconnect",
+    "connection-loss",
+    "disabled",
+    "reset",
+    "error",
+  ]) {
+    await poll();
+    let resolveRead;
+    let rejectRead;
+    let reads = 0;
+    fake.robot.isPlayButtonPressed = () => {
+      reads++;
+      return new Promise((resolve, reject) => {
+        resolveRead = resolve;
+        rejectRead = reject;
+      });
+    };
+    const pending = poll();
+    await poll();
+    assert.equal(reads, 1);
+    if (interruption === "stop") await controller.stop();
+    if (interruption === "disconnect") {
+      await controller.disconnect();
+      await controller.connect();
+      controller.confirmPenSettings();
+    }
+    if (interruption === "disabled") enabled = false;
+    if (interruption === "reset") controller.resetPlayButton();
+    if (interruption === "connection-loss") {
+      fake.robot.connected = false;
+    }
+    if (interruption === "error") rejectRead(new Error("button unavailable"));
+    else resolveRead(true);
+    await pending;
+    assert.equal(runs, 0);
+    assert.equal(controller.getView().status, "connected");
+    assert.equal(controller.getView().busy, false);
+    enabled = true;
+    fake.robot.connected = true;
+    pressed = true;
+    fake.robot.isPlayButtonPressed = async () => pressed;
+    await poll();
+    assert.equal(runs, 0);
+    pressed = false;
+  }
+  await poll();
+  pressed = true;
+  await poll();
+  assert.equal(runs, 1);
+  pressed = false;
+  await poll();
+  let resolveRead;
+  fake.robot.isPlayButtonPressed = () =>
+    new Promise((resolve) => {
+      resolveRead = resolve;
+    });
+  const pending = poll();
+  await controller.dispose();
+  resolveRead(true);
+  await pending;
+  assert.equal(runs, 1);
+});
+
+test("play button does not read during robot actions or on unsupported adapters", async () => {
+  const fake = createRobot();
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  const enabled = () => true;
+  await controller.connect();
+  controller.confirmPenSettings();
+  await controller.pollPlayButton(assert.fail, enabled);
+  await controller.showStatus("Ready");
+  fake.robot.showStatus = async (text) => fake.calls.push(["screen", text]);
+  await controller.showStatus("Ready");
+  assert.deepEqual(fake.calls, [["screen", "Ready"]]);
+  fake.robot.isPlayButtonPressed = assert.fail;
+  let finishAction;
+  const action = controller.runProgram(
+    () =>
+      new Promise((resolve) => {
+        finishAction = resolve;
+      }),
+  );
+  await controller.pollPlayButton(assert.fail, enabled);
+  finishAction();
+  await action;
+});
 
 test("manual pen and program share frozen calibration and reconnect requires confirmation", async () => {
   const fake = createRobot();
@@ -140,7 +305,10 @@ test("disconnect invalidates pending status readings", async () => {
 test("a rejected connection cannot overwrite a later disconnect", async () => {
   let rejectConnection;
   const controller = createRobotControlPanelController(
-    () => new Promise((_resolve, reject) => { rejectConnection = reject; }),
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectConnection = reject;
+      }),
   );
   const connecting = controller.connect();
   await controller.disconnect();
@@ -278,7 +446,7 @@ test("program owns the connection until acknowledgement settles, with emergency 
     });
   });
   await controller.move("forward");
-  await controller.runProgram(async () => assert.fail("overlapping program"));
+  await controller.runProgram(assert.fail);
   assert.equal(controller.getView().busy, true);
   assert.equal(isCancelled(), false);
   await controller.stop();
@@ -380,9 +548,7 @@ test("virtual execution locks manual and program actions", async () => {
   controller.confirmPenSettings();
   await controller.testPenAngle("downAngle");
   assert.equal(controller.getView().penConfirmed, false);
-  await controller.runProgram(async () =>
-    assert.fail("virtual execution active"),
-  );
+  await controller.runProgram(assert.fail);
   assert.deepEqual(fake.calls, []);
 });
 
@@ -391,10 +557,13 @@ test("a disconnected program reports non-Error failure without further hardware 
   const controller = createRobotControlPanelController(async () => fake.robot);
   await controller.connect();
   const failure = { reason: "lost connection" };
-  await assert.rejects(controller.runProgram(async () => {
-    fake.robot.connected = false;
-    throw failure;
-  }), (error) => error === failure);
+  await assert.rejects(
+    controller.runProgram(async () => {
+      fake.robot.connected = false;
+      throw failure;
+    }),
+    (error) => error === failure,
+  );
   assert.equal(controller.getView().status, "error");
   assert.equal(controller.getView().statusMessage, "Robot run failed.");
   assert.equal(controller.getView().busy, false);
@@ -563,13 +732,23 @@ test("disconnect handles an already disconnected robot", async () => {
 
 test("cleanup failure releases ownership when disconnect succeeds", async () => {
   const fake = createRobot();
-  fake.robot.stop = async () => { throw "stop failed"; };
-  fake.robot.disconnect = () => { fake.robot.connected = false; };
+  fake.robot.stop = async () => {
+    throw "stop failed";
+  };
+  fake.robot.disconnect = () => {
+    fake.robot.connected = false;
+  };
   const controller = createRobotControlPanelController(async () => fake.robot);
   await controller.connect();
-  await assert.rejects(controller.disconnect(), (error) => error === "stop failed");
+  await assert.rejects(
+    controller.disconnect(),
+    (error) => error === "stop failed",
+  );
   assert.equal(controller.getView().status, "error");
-  assert.equal(controller.getView().statusMessage, "Robot safety cleanup failed.");
+  assert.equal(
+    controller.getView().statusMessage,
+    "Robot safety cleanup failed.",
+  );
   assert.equal(controller.getView().deviceName, "");
   assert.equal(controller.getView().robotOwned, false);
   await controller.move("forward");
@@ -590,11 +769,17 @@ test("dispose cancels the program and raises its calibrated pen before disconnec
   let isCancelled;
   const running = controller.runProgram((_robot, cancelled) => {
     isCancelled = cancelled;
-    return new Promise((resolve) => { finish = resolve; });
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
   });
   await controller.dispose();
   assert.equal(isCancelled(), true);
-  assert.deepEqual(fake.calls, [["stop"], ["pen", false, settings], ["disconnect"]]);
+  assert.deepEqual(fake.calls, [
+    ["stop"],
+    ["pen", false, settings],
+    ["disconnect"],
+  ]);
   finish();
   await running;
   assert.equal(fake.calls.length, 3);

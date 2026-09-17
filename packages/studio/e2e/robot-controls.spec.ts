@@ -4,6 +4,9 @@ declare global {
   var robotBluetoothMock:
     | {
         readonly scripts: string[];
+        readonly allScripts: string[];
+        readonly buttonReadings: boolean[];
+        playButtonPressed: boolean;
         readonly connectCount: number;
         readonly disconnectCount: number;
         releaseMovement(): void;
@@ -20,6 +23,9 @@ async function installMBot2BluetoothMock(
 ): Promise<void> {
   await page.addInitScript((mockOptions) => {
     const scripts: string[] = [];
+    const buttonReadings: boolean[] = [];
+    let playButtonPressed = false;
+    const buttonQuery = "(1 if cyberpi.controller.is_press('b') else 0)";
     let connected = false;
     let connectCount = 0;
     let disconnectCount = 0;
@@ -52,6 +58,7 @@ async function installMBot2BluetoothMock(
         if (frame[4] !== 0x28) return;
         const script = new TextDecoder().decode(frame.subarray(10, -2));
         scripts.push(script);
+        if (script === buttonQuery) buttonReadings.push(playButtonPressed);
         if (script.startsWith("(mbot2.forward(")) await movementBlocked;
         const sensorValue = script.includes("get_battery")
           ? 87
@@ -60,7 +67,9 @@ async function installMBot2BluetoothMock(
             : script.startsWith("(mbot2.") ||
                 script.startsWith("(cyberpi.display.")
               ? 1
-              : undefined;
+              : script === buttonQuery
+                ? Number(playButtonPressed)
+                : undefined;
         if (sensorValue !== undefined) {
           const payload = new TextEncoder().encode(
             JSON.stringify({ ret: sensorValue }),
@@ -132,7 +141,17 @@ async function installMBot2BluetoothMock(
       value: { requestDevice: async () => device },
     });
     globalThis.robotBluetoothMock = {
-      scripts,
+      get scripts() {
+        return scripts.filter((script) => script !== buttonQuery);
+      },
+      allScripts: scripts,
+      buttonReadings,
+      get playButtonPressed() {
+        return playButtonPressed;
+      },
+      set playButtonPressed(pressed) {
+        playButtonPressed = pressed;
+      },
       get connectCount() {
         return connectCount;
       },
@@ -142,6 +161,24 @@ async function installMBot2BluetoothMock(
       releaseMovement,
     };
   }, options);
+}
+
+async function samplePlayButton(page: Page, pressed: boolean): Promise<void> {
+  const before = await page.evaluate((value) => {
+    const mock = globalThis.robotBluetoothMock!;
+    mock.playButtonPressed = value;
+    return mock.buttonReadings.length;
+  }, pressed);
+  await expect
+    .poll(() =>
+      page.evaluate(() => globalThis.robotBluetoothMock!.buttonReadings.length),
+    )
+    .toBeGreaterThan(before);
+  expect(
+    await page.evaluate(() =>
+      globalThis.robotBluetoothMock!.buttonReadings.at(-1),
+    ),
+  ).toBe(pressed);
 }
 
 async function confirmPenCalibration(page: Page): Promise<void> {
@@ -331,78 +368,122 @@ test("Run on turtlebot sends whole motion phases with command labels and updates
   ).toBeCloseTo(40, 8);
 });
 
-test("production preview captures and runs whole board motions with screen status", async ({
-  page,
-}) => {
-  await installMBot2BluetoothMock(page);
-  await installCameraMock(page);
-  let recognitionRequest: unknown;
-  await page.route("**/api/recognize-board", async (route) => {
-    recognitionRequest = route.request().postDataJSON();
-    await route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        blocks: [
-          {
-            id: "forward-1",
-            kind: "command",
-            name: "forward",
-            arguments: ["100"],
-            bounds: { x: 0, y: 0, width: 2, height: 2 },
-            confidence: 1,
-            children: [],
-          },
-          {
-            id: "right-1",
-            kind: "command",
-            name: "right",
-            arguments: ["360"],
-            bounds: { x: 0, y: 3, width: 2, height: 2 },
-            confidence: 1,
-            children: [],
-          },
-        ],
-      }),
+for (const trigger of ["screen", "robot"] as const) {
+  test(`production preview captures and runs whole board motions with screen status from ${trigger}`, async ({
+    page,
+  }) => {
+    await installMBot2BluetoothMock(page);
+    await installCameraMock(page);
+    let recognitionRequest: unknown;
+    let recognitionCount = 0;
+    await page.route("**/api/recognize-board", async (route) => {
+      recognitionCount++;
+      recognitionRequest = route.request().postDataJSON();
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          blocks: [
+            {
+              id: "forward-1",
+              kind: "command",
+              name: "forward",
+              arguments: ["100"],
+              bounds: { x: 0, y: 0, width: 2, height: 2 },
+              confidence: 1,
+              children: [],
+            },
+            {
+              id: "right-1",
+              kind: "command",
+              name: "right",
+              arguments: ["360"],
+              bounds: { x: 0, y: 3, width: 2, height: 2 },
+              confidence: 1,
+              children: [],
+            },
+          ],
+        }),
+      });
     });
-  });
-  await page.goto("/");
-  await page.locator("#robot-controls summary").click();
-  await page.locator("#robot-connect").click();
-  await confirmPenCalibration(page);
-  await page.locator("#camera-robot-demo-button").click();
+    await page.goto("/");
+    if (trigger === "robot") {
+      await page.evaluate(() => {
+        globalThis.robotBluetoothMock!.playButtonPressed = true;
+      });
+    }
+    await page.locator("#robot-controls summary").click();
+    await page.locator("#robot-connect").click();
+    expect(
+      await page.evaluate(() => globalThis.robotBluetoothMock!.buttonReadings),
+    ).toEqual([]);
+    await confirmPenCalibration(page);
+    if (trigger === "robot") {
+      await samplePlayButton(page, true);
+      await samplePlayButton(page, true);
+      expect(recognitionCount).toBe(0);
+      await samplePlayButton(page, false);
+      await samplePlayButton(page, true);
+    } else {
+      await page.locator("#camera-robot-demo-button").click();
+    }
 
-  await expect(page.locator("#camera-robot-demo-status")).toHaveText(
-    "Recognized program completed on turtlebot.",
-  );
-  await expect(page.locator(".cm-content")).toHaveText("forward 100right 360");
-  expect(recognitionRequest).toMatchObject({
-    imageWidth: 2,
-    imageHeight: 2,
-    imageMimeType: "image/jpeg",
-  });
-  expect(
-    await page.evaluate(() => globalThis.robotBluetoothMock?.scripts ?? []),
-  ).toEqual([
-    '(cyberpi.display.clear(),cyberpi.display.show_label("Taking photo",16,0,40,0),1)[2]',
-    '(cyberpi.display.clear(),cyberpi.display.show_label("Reading board",16,0,40,0),1)[2]',
-    '(cyberpi.display.clear(),cyberpi.display.show_label("Running",16,0,40,0),1)[2]',
-    '(cyberpi.display.clear(),cyberpi.display.show_label("forward 100",16,0,40,0),1)[2]',
-    "(mbot2.straight(10,speed=30),1)[1]",
-    '(cyberpi.display.clear(),cyberpi.display.show_label("right 360",16,0,40,0),1)[2]',
-    "(mbot2.servo_set(90,3),1)[1]",
-    "(mbot2.turn(367,speed=30),1)[1]",
-    "(mbot2.EM_stop(),1)[1]",
-    "(mbot2.servo_set(90,3),1)[1]",
-    '(cyberpi.display.clear(),cyberpi.display.show_label("Done",16,0,40,0),1)[2]',
-  ]);
-  await expect(page.locator("#turtle-state")).toContainText(
-    "x 0 y 100 heading 0",
-  );
+    await expect(page.locator("#camera-robot-demo-status")).toHaveText(
+      "Recognized program completed on turtlebot.",
+    );
+    await expect(page.locator(".cm-content")).toHaveText(
+      "forward 100right 360",
+    );
+    expect(recognitionRequest).toMatchObject({
+      imageWidth: 2,
+      imageHeight: 2,
+      imageMimeType: "image/jpeg",
+    });
+    expect(
+      await page.evaluate(() => globalThis.robotBluetoothMock?.scripts ?? []),
+    ).toEqual([
+      '(cyberpi.display.clear(),cyberpi.display.show_label("Taking photo",16,0,40,0),1)[2]',
+      '(cyberpi.display.clear(),cyberpi.display.show_label("Reading board",16,0,40,0),1)[2]',
+      '(cyberpi.display.clear(),cyberpi.display.show_label("Running",16,0,40,0),1)[2]',
+      '(cyberpi.display.clear(),cyberpi.display.show_label("forward 100",16,0,40,0),1)[2]',
+      "(mbot2.straight(10,speed=30),1)[1]",
+      '(cyberpi.display.clear(),cyberpi.display.show_label("right 360",16,0,40,0),1)[2]',
+      "(mbot2.servo_set(90,3),1)[1]",
+      "(mbot2.turn(367,speed=30),1)[1]",
+      "(mbot2.EM_stop(),1)[1]",
+      "(mbot2.servo_set(90,3),1)[1]",
+      '(cyberpi.display.clear(),cyberpi.display.show_label("Done",16,0,40,0),1)[2]',
+    ]);
+    await expect(page.locator("#turtle-state")).toContainText(
+      "x 0 y 100 heading 0",
+    );
+    const allScripts = await page.evaluate(
+      () => globalThis.robotBluetoothMock!.allScripts,
+    );
+    const commands = await page.evaluate(
+      () => globalThis.robotBluetoothMock!.scripts,
+    );
+    const start = allScripts.indexOf(commands[0]!);
+    expect(allScripts.slice(start, start + commands.length)).toEqual(commands);
 
-  await page.unroute("**/api/recognize-board");
-  const previewResponse = await page.request.get("/api/recognize-board");
-  expect(previewResponse.status()).toBe(405);
-});
+    if (trigger === "robot") {
+      await samplePlayButton(page, true);
+      await samplePlayButton(page, true);
+      expect(recognitionCount).toBe(1);
+      await samplePlayButton(page, false);
+      await samplePlayButton(page, true);
+      await expect.poll(() => recognitionCount).toBe(2);
+      await expect(page.locator("#camera-robot-demo-status")).toHaveText(
+        "Recognized program completed on turtlebot.",
+      );
+      await samplePlayButton(page, true);
+      expect(recognitionCount).toBe(2);
+    }
+
+    await page.unroute("**/api/recognize-board");
+    const previewResponse = await page.request.get("/api/recognize-board");
+    expect(previewResponse.status()).toBe(405);
+  });
+}
 
 test("compensated turns restore only the current explicit down intent", async ({
   page,

@@ -36,6 +36,8 @@ export interface RobotControlPanelController {
   move(direction: RobotMovement): Promise<void>;
   stop(): Promise<void>;
   showStatus(text: string): Promise<void>;
+  pollPlayButton(onPress: () => void, enabled: () => boolean): Promise<void>;
+  resetPlayButton(): void;
   refreshStatus(): Promise<void>;
   setPenSettings(settings: Partial<RobotPenSettings>): void;
   confirmPenSettings(): void;
@@ -63,6 +65,13 @@ export function createRobotControlPanelController(
   let connectionPending = false;
   let activeActionCount = 0;
   let cancelProgram: (() => void) | undefined;
+  let playButtonReadPending = false;
+  let playButtonArmed = false;
+  let playButtonRevision = 0;
+  const resetPlayButton = (): void => {
+    playButtonArmed = false;
+    playButtonRevision++;
+  };
   let view: RobotControlPanelView = {
     status: connectRobot === undefined ? "unsupported" : "disconnected",
     statusMessage:
@@ -88,6 +97,7 @@ export function createRobotControlPanelController(
   };
   const listeners = new Set<(view: RobotControlPanelView) => void>();
   const publish = (changes: Partial<RobotControlPanelView>): void => {
+    resetPlayButton();
     view = { ...view, ...changes };
     for (const listener of listeners) listener(view);
   };
@@ -287,6 +297,44 @@ export function createRobotControlPanelController(
         true,
         false,
       );
+    },
+    resetPlayButton,
+    async pollPlayButton(onPress, enabled) {
+      const activeRobot = robot;
+      const canRead = (): boolean =>
+        !disposed &&
+        view.status === "connected" &&
+        robot === activeRobot &&
+        activeRobot?.connected === true &&
+        !view.busy &&
+        view.penConfirmed &&
+        !executionLocked() &&
+        enabled();
+      if (!canRead()) {
+        resetPlayButton();
+        return;
+      }
+      if (
+        playButtonReadPending ||
+        activeRobot!.isPlayButtonPressed === undefined
+      )
+        return;
+      playButtonReadPending = true;
+      const revision = playButtonRevision;
+      try {
+        const pressed = await activeRobot!.isPlayButtonPressed();
+        if (revision !== playButtonRevision || !canRead()) {
+          resetPlayButton();
+          return;
+        }
+        const triggered = pressed && playButtonArmed;
+        playButtonArmed = !pressed;
+        if (triggered) onPress();
+      } catch {
+        resetPlayButton();
+      } finally {
+        playButtonReadPending = false;
+      }
     },
     refreshStatus() {
       if (executionLocked()) return Promise.resolve();

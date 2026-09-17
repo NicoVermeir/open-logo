@@ -71,6 +71,28 @@ function createTransport() {
   };
 }
 
+test("reads the CyberPi B input and rejects missing or invalid responses", async () => {
+  const fake = createTransport();
+  let response = 0;
+  fake.transport.evaluate = async (expression) => {
+    fake.expressions.push(expression);
+    return response;
+  };
+  const robot = createMBot2ManualRobot(fake.transport);
+  assert.equal(await robot.isPlayButtonPressed(), false);
+  response = 1;
+  assert.equal(await robot.isPlayButtonPressed(), true);
+  assert.deepEqual(fake.expressions, [
+    "(1 if cyberpi.controller.is_press('b') else 0)",
+    "(1 if cyberpi.controller.is_press('b') else 0)",
+  ]);
+  for (response of [undefined, 2, "1", true]) {
+    await assert.rejects(robot.isPlayButtonPressed(), /not acknowledged/);
+  }
+  fake.transport.disconnect();
+  await assert.rejects(robot.isPlayButtonPressed(), /disconnected/);
+});
+
 test("pen commands acknowledge then settle, use absolute socket-3 angles, and reject invalid settings", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout"] });
   const fake = createTransport();

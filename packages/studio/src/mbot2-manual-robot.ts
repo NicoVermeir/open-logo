@@ -65,6 +65,7 @@ export interface MBot2ManualRobot {
   readonly deviceName: string;
   readonly connected: boolean;
   showStatus?(text: string): Promise<void>;
+  isPlayButtonPressed?(): Promise<boolean>;
   forward(speed: number, durationSeconds: number): Promise<void>;
   backward(speed: number, durationSeconds: number): Promise<void>;
   turnLeft(speed: number, durationSeconds: number): Promise<void>;
@@ -133,6 +134,15 @@ export function createMBot2ManualRobot(
     deviceName: transport.deviceName,
     get connected() {
       return transport.connected;
+    },
+    isPlayButtonPressed: async () => {
+      if (!transport.connected) throw new Error("The robot disconnected.");
+      const response = await transport.evaluate(
+        "(1 if cyberpi.controller.is_press('b') else 0)",
+      );
+      if (response !== 0 && response !== 1)
+        throw new Error("Robot button state was not acknowledged.");
+      return response === 1;
     },
     showStatus: async (text) => {
       if (!transport.connected) throw new Error("The robot disconnected.");
