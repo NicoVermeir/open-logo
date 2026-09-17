@@ -8,14 +8,24 @@ import {
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { modelErrorMessage } from "./src/board-recognition-response.js";
+import {
+  createAccessTokenCache,
+  formatServerTiming,
+} from "./vite-access-token-cache.mjs";
+import { createVisionRequest } from "./vite-vision-request.mjs";
 
 const executeFile = promisify(execFile);
+const accessTokenCache = createAccessTokenCache();
 
 function boardRecognitionProxy(env: Record<string, string>): Plugin {
   const installMiddleware = (server: ViteDevServer | PreviewServer): void => {
     server.middlewares.use(
       "/api/recognize-board",
       async (request, response) => {
+        const requestStartedAt = performance.now();
+        let authenticationDuration = 0;
+        let modelDuration = 0;
+        let parseDuration = 0;
         if (request.method !== "POST") {
           response.statusCode = 405;
           response.end("Method not allowed");
@@ -33,28 +43,50 @@ function boardRecognitionProxy(env: Record<string, string>): Plugin {
         }
 
         const cancellation = new AbortController();
+        let modelRequestTimedOut = false;
         response.once("close", () => {
           if (!response.writableEnded) cancellation.abort();
         });
         try {
           const requestBody = await readJsonBody(request);
+          const authenticationStartedAt = performance.now();
           const accessToken = await getAzureAccessToken(
             env,
             env.OPENLOGO_LLM_SCOPE ?? "https://ai.azure.com/.default",
           );
-          const modelResponse = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              Authorization: `Bearer ${accessToken}`,
-            },
-            body: JSON.stringify(createVisionRequest(requestBody, env)),
-            signal: cancellation.signal,
-          });
-          const responseText = await modelResponse.text();
+          authenticationDuration = performance.now() - authenticationStartedAt;
+          const timeoutMilliseconds = modelTimeoutMilliseconds(env);
+          const timeout = setTimeout(() => {
+            modelRequestTimedOut = true;
+            cancellation.abort();
+          }, timeoutMilliseconds);
+          const modelStartedAt = performance.now();
+          let modelResponse: Response;
+          let responseText: string;
+          try {
+            modelResponse = await fetch(endpoint, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                Authorization: `Bearer ${accessToken}`,
+              },
+              body: JSON.stringify(createVisionRequest(requestBody, env)),
+              signal: cancellation.signal,
+            });
+            responseText = await modelResponse.text();
+          } finally {
+            clearTimeout(timeout);
+            modelDuration = performance.now() - modelStartedAt;
+          }
           if (!modelResponse.ok) {
             response.statusCode = modelResponse.status;
             response.setHeader("content-type", "application/json");
+            setRecognitionTimingHeader(response, {
+              auth: authenticationDuration,
+              model: modelDuration,
+              parse: parseDuration,
+              total: performance.now() - requestStartedAt,
+            });
             response.end(
               JSON.stringify({
                 error: modelErrorMessage(responseText, modelResponse.status),
@@ -62,19 +94,39 @@ function boardRecognitionProxy(env: Record<string, string>): Plugin {
             );
             return;
           }
+          const parseStartedAt = performance.now();
+          const recognition = extractModelJson(JSON.parse(responseText));
+          parseDuration = performance.now() - parseStartedAt;
           response.statusCode = 200;
           response.setHeader("content-type", "application/json");
-          response.end(
-            JSON.stringify(extractModelJson(JSON.parse(responseText))),
-          );
+          setRecognitionTimingHeader(response, {
+            auth: authenticationDuration,
+            model: modelDuration,
+            parse: parseDuration,
+            total: performance.now() - requestStartedAt,
+          });
+          response.end(JSON.stringify(recognition));
         } catch (error) {
-          if (cancellation.signal.aborted || response.destroyed) return;
+          if (
+            (cancellation.signal.aborted && !modelRequestTimedOut) ||
+            response.destroyed
+          )
+            return;
           response.statusCode = 502;
           response.setHeader("content-type", "application/json");
+          setRecognitionTimingHeader(response, {
+            auth: authenticationDuration,
+            model: modelDuration,
+            parse: parseDuration,
+            total: performance.now() - requestStartedAt,
+          });
           response.end(
             JSON.stringify({
-              error:
-                error instanceof Error ? error.message : "LLM request failed.",
+              error: modelRequestTimedOut
+                ? `Board recognition timed out after ${modelTimeoutMilliseconds(env)} ms.`
+                : error instanceof Error
+                  ? error.message
+                  : "LLM request failed.",
             }),
           );
         }
@@ -89,6 +141,16 @@ function boardRecognitionProxy(env: Record<string, string>): Plugin {
 }
 
 async function getAzureAccessToken(
+  env: Record<string, string>,
+  scope: string,
+): Promise<string> {
+  const tenant = env.OPENLOGO_AZURE_TENANT_ID ?? "";
+  return accessTokenCache.get(`${tenant}|${scope}`, () =>
+    acquireAzureAccessToken(env, scope),
+  );
+}
+
+async function acquireAzureAccessToken(
   env: Record<string, string>,
   scope: string,
 ): Promise<string> {
@@ -132,6 +194,18 @@ async function getAzureAccessToken(
       `Could not acquire an Entra ID token. Run 'az login'. ${detail}`,
     );
   }
+}
+
+function modelTimeoutMilliseconds(env: Record<string, string>): number {
+  const configured = Number(env.OPENLOGO_LLM_TIMEOUT_MS ?? 20_000);
+  return Number.isFinite(configured) && configured > 0 ? configured : 20_000;
+}
+
+function setRecognitionTimingHeader(
+  response: import("node:http").ServerResponse,
+  timings: Record<string, number>,
+): void {
+  response.setHeader("Server-Timing", formatServerTiming(timings));
 }
 
 function realtimeTokenProxy(env: Record<string, string>): Plugin {
@@ -274,41 +348,6 @@ function readJsonBody(
     });
     request.on("error", reject);
   });
-}
-
-function createVisionRequest(
-  body: Record<string, unknown>,
-  env: Record<string, string>,
-) {
-  const imageBase64 = String(body.imageBase64 ?? "");
-  const imageMimeType = String(body.imageMimeType ?? "image/png");
-  const imageWidth = String(body.imageWidth ?? "unknown");
-  const imageHeight = String(body.imageHeight ?? "unknown");
-  const instructions = String(body.instructions ?? "");
-  const magnetCatalog = JSON.stringify(body.magnetCatalog ?? []);
-  return {
-    model: env.OPENLOGO_LLM_MODEL || undefined,
-    response_format: { type: "json_object" },
-    messages: [
-      {
-        role: "system",
-        content: `${instructions} Return exactly {"blocks":[...]} with each block containing name, arguments, bounds, confidence, and children. Bounds must use this image coordinate space: width ${imageWidth}, height ${imageHeight}. The supported magnet catalog is: ${magnetCatalog}`,
-      },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: "Recognize this OpenLogo magnetic board." },
-          {
-            type: "image_url",
-            image_url: {
-              url: `data:${imageMimeType};base64,${imageBase64}`,
-              detail: "high",
-            },
-          },
-        ],
-      },
-    ],
-  };
 }
 
 function extractModelJson(response: unknown): unknown {

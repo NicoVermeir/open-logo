@@ -510,6 +510,7 @@ let boardImageSelectionActive = false;
 let boardImageDecodeActive = false;
 let boardRecognitionActive = false;
 let boardImportRevision = 0;
+let retryableBoardImage: RasterImage | null = null;
 
 function canRunCameraRobotDemo(view = robotControls.getView()): boolean {
   return (
@@ -706,6 +707,13 @@ function createDevProxyBoardRecognitionClient(): LlmBoardRecognitionClient {
 }
 
 boardImportButton.addEventListener("click", () => {
+  if (
+    boardImportController.getState().status === "failed" &&
+    retryableBoardImage !== null
+  ) {
+    void boardImportController.importImage(retryableBoardImage);
+    return;
+  }
   boardImageSelectionActive = true;
   renderBoardImportState(
     boardImportController.getState(),
@@ -727,6 +735,7 @@ boardImageInput.addEventListener("change", () => {
   boardImageInput.value = "";
   boardImageSelectionActive = false;
   if (file) {
+    retryableBoardImage = null;
     const currentRevision = ++boardImportRevision;
     boardImageDecodeActive = true;
     renderBoardImportState(
@@ -738,6 +747,7 @@ boardImageInput.addEventListener("change", () => {
       .then((image) => {
         if (currentRevision !== boardImportRevision) return null;
         boardImageDecodeActive = false;
+        retryableBoardImage = image;
         return boardImportController.importImage(image);
       })
       .catch((error: unknown) => {
@@ -791,12 +801,22 @@ async function decodeRasterImage(file: File): Promise<RasterImage> {
 }
 
 async function readFileAsBase64(file: File): Promise<string> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("This browser cannot encode board images."));
+    });
+    reader.addEventListener("error", () =>
+      reject(reader.error ?? new Error("Could not read the selected image.")),
+    );
+    reader.readAsDataURL(file);
+  });
+  const separatorIndex = dataUrl.indexOf(",");
+  if (separatorIndex < 0) {
+    throw new Error("This browser returned an invalid board image encoding.");
   }
-  return btoa(binary);
+  return dataUrl.slice(separatorIndex + 1);
 }
 
 function renderBoardImportState(
@@ -810,6 +830,17 @@ function renderBoardImportState(
     boardImageDecodeActive ||
     boardRecognitionActive;
   button.disabled = boardImportActive || cameraRobotDemoActive;
+  const retryAvailable =
+    importState.status === "failed" && retryableBoardImage !== null;
+  button.setAttribute(
+    "aria-label",
+    retryAvailable
+      ? "Retry OpenLogo board image"
+      : "Import OpenLogo board image",
+  );
+  const buttonLabel = button.querySelector<HTMLElement>(".control-label");
+  if (buttonLabel)
+    buttonLabel.textContent = retryAvailable ? "Retry image" : "Import image";
   renderRobotControls(robotControls.getView());
   statusElement.textContent = {
     idle: "",
@@ -1291,14 +1322,20 @@ async function captureCameraFrame(): Promise<RasterImage> {
         video.removeEventListener("error", metadataFailed);
       });
     }
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const context = canvas.getContext("2d");
-    if (!context || canvas.width === 0 || canvas.height === 0) {
+    const frameWidth = video.videoWidth;
+    const frameHeight = video.videoHeight;
+    if (frameWidth === 0 || frameHeight === 0) {
       throw new Error("The camera did not provide a usable frame.");
     }
-    context.drawImage(video, 0, 0);
+    const scale = Math.min(1, 1600 / Math.max(frameWidth, frameHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(frameWidth * scale));
+    canvas.height = Math.max(1, Math.round(frameHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("The camera did not provide a usable frame.");
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
     const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
     return {
       width: imageData.width,
@@ -1391,6 +1428,7 @@ runToggleButton.addEventListener("click", () => {
 resetButton.addEventListener("click", () => {
   robotControls.resetPlayButton();
   boardImportRevision++;
+  retryableBoardImage = null;
   boardImageSelectionActive = false;
   boardImageDecodeActive = false;
   boardImportController.cancel();

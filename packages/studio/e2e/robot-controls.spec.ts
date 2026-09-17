@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 declare global {
+  var cameraStreamMock: MediaStream | undefined;
   var robotBluetoothMock:
     | {
         readonly scripts: string[];
@@ -406,6 +407,138 @@ test("Run on turtlebot shows every instruction with whole motion phases and upda
     vertical + 126 * Math.cos(radians) + 26 * Math.sin(radians),
   ).toBeCloseTo(40, 8);
 });
+
+for (const dimensions of [
+  { width: 3840, height: 2160, expectedWidth: 1600, expectedHeight: 900 },
+  { width: 2160, height: 3840, expectedWidth: 900, expectedHeight: 1600 },
+  { width: 1280, height: 720, expectedWidth: 1280, expectedHeight: 720 },
+  { width: 1600, height: 900, expectedWidth: 1600, expectedHeight: 900 },
+  { width: 1921, height: 1081, expectedWidth: 1600, expectedHeight: 900 },
+]) {
+  test(`camera recognition scales the complete ${dimensions.width}x${dimensions.height} frame without upscaling`, async ({
+    page,
+  }) => {
+    await installMBot2BluetoothMock(page);
+    await page.addInitScript(({ width, height }) => {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          getUserMedia: async () => {
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext("2d")!;
+            for (const [horizontal, vertical, color] of [
+              [0, 0, "#ff0000"],
+              [1, 0, "#00ff00"],
+              [0, 1, "#0000ff"],
+              [1, 1, "#ffffff"],
+            ] as const) {
+              context.fillStyle = color;
+              context.fillRect(
+                (horizontal * width) / 2,
+                (vertical * height) / 2,
+                width / 2,
+                height / 2,
+              );
+            }
+            globalThis.cameraStreamMock = canvas.captureStream();
+            return globalThis.cameraStreamMock;
+          },
+        },
+      });
+    }, dimensions);
+    await page.route("**/api/recognize-board", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          blocks: [
+            {
+              id: "forward-1",
+              kind: "command",
+              name: "forward",
+              arguments: ["100"],
+              bounds: { x: 0, y: 0, width: 2, height: 2 },
+              confidence: 1,
+              children: [],
+            },
+          ],
+        }),
+      }),
+    );
+    await page.goto("/");
+    await page.locator("#robot-controls summary").click();
+    await page.locator("#robot-connect").click();
+    await confirmPenCalibration(page);
+    const requestPromise = page.waitForRequest("**/api/recognize-board");
+    await page.locator("#camera-robot-demo-button").click();
+    const recognitionRequest = (await requestPromise).postDataJSON();
+    expect(recognitionRequest).toMatchObject({
+      imageWidth: dimensions.expectedWidth,
+      imageHeight: dimensions.expectedHeight,
+      imageMimeType: "image/jpeg",
+    });
+    const decodedFrame = await page.evaluate(async (request) => {
+      const response = await fetch(
+        `data:${request.imageMimeType};base64,${request.imageBase64}`,
+      );
+      const bitmap = await createImageBitmap(await response.blob());
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      return {
+        width: canvas.width,
+        height: canvas.height,
+        corners: [
+          [0.1, 0.1],
+          [0.9, 0.1],
+          [0.1, 0.9],
+          [0.9, 0.9],
+        ].map(([horizontal, vertical]) =>
+          Array.from(
+            context.getImageData(
+              Math.floor(horizontal! * canvas.width),
+              Math.floor(vertical! * canvas.height),
+              1,
+              1,
+            ).data,
+          ),
+        ),
+      };
+    }, recognitionRequest);
+    expect(decodedFrame.width).toBe(dimensions.expectedWidth);
+    expect(decodedFrame.height).toBe(dimensions.expectedHeight);
+    const expectedColors = [
+      [255, 0, 0, 255],
+      [0, 255, 0, 255],
+      [0, 0, 255, 255],
+      [255, 255, 255, 255],
+    ];
+    for (const [cornerIndex, corner] of decodedFrame.corners.entries()) {
+      for (const [channelIndex, channel] of corner.entries()) {
+        expect(
+          Math.abs(channel - expectedColors[cornerIndex]![channelIndex]!),
+        ).toBeLessThanOrEqual(3);
+      }
+    }
+    await expect(page.locator("#camera-robot-demo-status")).toHaveText(
+      "Recognized program completed on turtlebot.",
+    );
+    await expect(page.locator("#turtle-state")).toContainText(
+      "x 0 y 100 heading 0",
+    );
+    expect(
+      await page.evaluate(() =>
+        globalThis
+          .cameraStreamMock!.getTracks()
+          .map((track) => track.readyState),
+      ),
+    ).toEqual(["ended"]);
+  });
+}
 
 for (const trigger of ["screen", "robot"] as const) {
   test(`production preview captures and runs whole board motions with screen status from ${trigger}`, async ({

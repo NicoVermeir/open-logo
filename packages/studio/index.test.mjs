@@ -670,6 +670,25 @@ test("web/main.ts cancels imports and the camera workflow before resetting from 
   );
 });
 
+test("web/main.ts retries failed board recognition without decoding the image again", () => {
+  assert.match(mainTs, /retryableBoardImage\s*=\s*image/);
+  assert.match(
+    mainTs,
+    /getState\(\)\.status\s*===\s*"failed"[\s\S]*?importImage\(retryableBoardImage\)/,
+  );
+  assert.match(
+    mainTs,
+    /resetButton\.addEventListener\("click",[\s\S]*?retryableBoardImage\s*=\s*null/,
+  );
+  assert.match(mainTs, /retryAvailable\s*\?[\s\S]*?"Retry image"/);
+});
+
+test("web/main.ts delegates lossless board-image base64 encoding to FileReader", () => {
+  assert.match(mainTs, /new FileReader\(\)/);
+  assert.match(mainTs, /reader\.readAsDataURL\(file\)/);
+  assert.doesNotMatch(mainTs, /for \(const byte of bytes\)/);
+});
+
 test("web/main.ts cancels the camera workflow before disposing robot controls on unload", () => {
   assert.match(
     mainTs,

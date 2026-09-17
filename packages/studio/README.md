@@ -23,6 +23,13 @@ the editor, and runs it through the same robot preflight and execution path as *
 The demo action is enabled only after the robot is connected and pen calibration is confirmed;
 camera or recognition failures stop the sequence before robot execution.
 
+Camera frames are scaled to a maximum 1600-pixel longest edge before RGBA extraction and JPEG
+encoding (quality 0.92), preserving aspect ratio with integer rounding and never enlarging smaller
+frames. A 3840-by-2160 capture becomes 1600-by-900. The encoded image and recognition coordinates
+use those same dimensions; uploaded photographs keep their original dimensions and encoded bytes.
+This bounds camera preprocessing and payload size, but real-board latency and recognition accuracy
+still need measurement; it does not guarantee a sub-10-second model response.
+
 The physical-button shortcut currently reads **CyberPi B** (`cyberpi.controller.is_press('b')`).
 The triangle/play icon's mapping to B still needs confirmation on the target robot.
 With Studio open in a visible tab, Bluetooth connected, pen calibration confirmed, and camera
@@ -41,10 +48,23 @@ keeps its short-lived Entra token server-side, and forwards requests to an OpenA
 Copy `.env.example` to `.env.local`, set `OPENLOGO_LLM_ENDPOINT` and `OPENLOGO_LLM_MODEL`, then
 run `az login`. The proxy obtains a short-lived Microsoft Entra token with
 `az account get-access-token`; no API key is read or stored. Set `OPENLOGO_AZURE_TENANT_ID` when
-the current Azure CLI tenant is not the Foundry tenant. Generated source is placed in the editor
+the current Azure CLI tenant is not the Foundry tenant. `OPENLOGO_LLM_TIMEOUT_MS` bounds each
+recognition request (20 seconds by default), and the response's `Server-Timing` header reports
+authentication, model, parsing, and total durations for latency diagnosis. Generated source is placed in the editor
 but is never executed automatically by the regular image-import action. The camera demo action is
 the deliberate exception, started on screen or by the physical-button shortcut. The proxy is a development-server integration; production
 deployments need the same `/api/recognize-board` contract hosted by their backend.
+
+`OPENLOGO_LLM_REASONING_EFFORT` optionally forwards the deployment's supported reasoning-effort
+setting. Leave it blank or unset to retain the model default and for models that do not support
+reasoning, such as `gpt-4.1`. For `gpt-5-mini`, compare `low` against the default `medium` as a
+latency experiment; lower effort can change recognition accuracy. See Microsoft's
+[reasoning model guidance](https://learn.microsoft.com/azure/foundry/openai/how-to/reasoning).
+Keep the model, image, prompt, and timeout unchanged during the comparison, and check repeated
+requests' `Server-Timing` alongside block names, arguments, nesting, order, and generated source.
+The `model` duration includes the upstream request and response download, not just inference.
+No setting guarantees a sub-10-second result. Remove the variable or set it to `medium` to restore
+the `gpt-5-mini` baseline, and restart Vite after changing environment settings.
 
 ## Local realtime voice tutor
 
