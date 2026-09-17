@@ -67,6 +67,11 @@
         tabindex="0"
         hidden
       ></section>
+      <div
+        id="lesson-editor-resizer"
+        class="pane-resizer pane-resizer-lesson-editor"
+        aria-hidden="true"
+      ></div>
       <section class="pane-editor" aria-label="Editor">
         <!--
           #315 (`docs/adr/0013-studio-editor-component.md`): CodeMirror 6 mounts its own
@@ -98,6 +103,11 @@
         </p>
         <div id="editor-host"></div>
       </section>
+      <div
+        id="editor-turtle-resizer"
+        class="pane-resizer pane-resizer-editor-turtle"
+        aria-hidden="true"
+      ></div>
       <section class="pane-controls" aria-label="Run controls" role="toolbar">
         <button
           id="run-toggle-button"
@@ -228,6 +238,35 @@
           />
           <span id="speed-description" aria-live="polite"></span>
         </span>
+        <details class="pane-size-controls">
+          <summary>Pane sizes</summary>
+          <div class="pane-size-sliders">
+            <label for="lesson-pane-size">Lesson</label>
+            <input
+              id="lesson-pane-size"
+              type="range"
+              min="10"
+              max="80"
+              value="20"
+            />
+            <label for="editor-pane-size">Code editor</label>
+            <input
+              id="editor-pane-size"
+              type="range"
+              min="10"
+              max="80"
+              value="48"
+            />
+            <label for="turtle-pane-size">Drawing</label>
+            <input
+              id="turtle-pane-size"
+              type="range"
+              min="10"
+              max="80"
+              value="42"
+            />
+          </div>
+        </details>
         <p
           id="run-status"
           role="status"
@@ -478,6 +517,83 @@
         ></ul>
       </section>
     </main>
+    <aside
+      id="voice-tutor"
+      class="voice-tutor"
+      aria-label="Realtime voice tutor"
+      hidden
+    >
+      <div class="voice-tutor-heading">
+        <span class="voice-tutor-avatar" aria-hidden="true">
+          <img src="/openlogo.png" alt="" />
+        </span>
+        <div>
+          <h2>OpenLogo tutor</h2>
+          <p>Ask about your code, lessons, or next hint.</p>
+        </div>
+      </div>
+      <label class="voice-tutor-mode-label" for="voice-tutor-mode"
+        >Conversation style</label
+      >
+      <select id="voice-tutor-mode">
+        <option value="conversation" selected>Conversation</option>
+        <option value="push-to-talk">Hold to talk</option>
+      </select>
+      <div class="voice-tutor-controls">
+        <button
+          id="voice-tutor-toggle"
+          type="button"
+          aria-pressed="false"
+          aria-describedby="voice-tutor-status"
+        >
+          Start conversation
+        </button>
+        <button
+          id="voice-tutor-mute"
+          type="button"
+          aria-pressed="false"
+          aria-label="Mute microphone"
+          disabled
+        >
+          Mute
+        </button>
+        <button id="voice-tutor-cancel-turn" type="button" disabled></button>
+      </div>
+      <div class="voice-tutor-follow-ups" aria-label="Tutor follow-up actions">
+        <button id="voice-tutor-more" type="button" disabled>
+          Tell me more
+        </button>
+        <button id="voice-tutor-repeat" type="button" disabled>
+          Say that again
+        </button>
+        <button id="voice-tutor-next-hint" type="button" disabled>
+          Give another hint
+        </button>
+      </div>
+      <p id="voice-tutor-status" role="status" aria-live="polite">
+        Voice tutor is off.
+      </p>
+      <ol
+        id="voice-tutor-transcript"
+        class="voice-tutor-transcript"
+        role="log"
+        aria-label="Voice tutor transcript"
+        aria-live="polite"
+        tabindex="0"
+      ></ol>
+      <audio id="voice-tutor-audio" autoplay></audio>
+    </aside>
+    <button
+      id="voice-tutor-launcher"
+      class="voice-tutor-launcher"
+      type="button"
+      aria-label="Open voice tutor"
+      aria-controls="voice-tutor"
+      aria-expanded="false"
+      title="Open voice tutor"
+    >
+      <img src="/openlogo.png" alt="" />
+    </button>
     <!--
       #769 — the learner-facing prompt for the blocking `input` reporter, wired to
       `@openlogo/runtime`'s host reader seam (#681) through `src/input-prompt.ts`. A native dialog

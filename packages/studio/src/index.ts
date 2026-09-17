@@ -684,6 +684,46 @@ export type {
 export { createRobotControlPanelController } from "./robot-control-panel.js";
 export { runRobotProgram, createRobotRunController } from "./robot-program.js";
 export type { RobotProgramOptions } from "./robot-program.js";
+
+export type {
+  RealtimeAudioSink,
+  RealtimeDataChannel,
+  RealtimeFetch,
+  RealtimeFetchResponse,
+  RealtimeMediaStream,
+  RealtimeMediaTrack,
+  RealtimePeerConnection,
+  RealtimeSessionDescription,
+  RealtimeVoiceSessionOptions,
+} from "./realtime-voice-session.js";
+export { createRealtimeVoiceSession } from "./realtime-voice-session.js";
+
+export type {
+  VoiceTutorController,
+  VoiceTutorControllerOptions,
+  VoiceTutorControllerStatus,
+  VoiceTutorControllerView,
+  VoiceTutorTranscriptEntry,
+} from "./voice-tutor-controller.js";
+export { createVoiceTutorController } from "./voice-tutor-controller.js";
+
+export type {
+  VoiceTutorPanelController,
+  VoiceTutorPanelView,
+} from "./voice-tutor-panel.js";
+export { createVoiceTutorPanelController } from "./voice-tutor-panel.js";
+
+export type {
+  PaneLayoutController,
+  PaneLayoutStorage,
+  PaneLayoutView,
+  PaneResizeController,
+  ResizablePane,
+} from "./pane-layout.js";
+export {
+  createPaneLayoutController,
+  createPaneResizeController,
+} from "./pane-layout.js";
 export {
   modelErrorMessage,
   parseBoardRecognitionResponse,

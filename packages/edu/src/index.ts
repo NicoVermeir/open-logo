@@ -62,6 +62,25 @@ export { explain, why } from "./tutor/explain-why.js";
 // via TutorContext.priorHintStage by the runtime dispatch slice (A2, #332).
 export { hint } from "./tutor/hint.js";
 
+// Tutor (AI): provider-neutral voice-session contract plus deterministic grounding builder.
+// Transport, authentication, browser audio, and UI remain host responsibilities.
+export { buildTutorBrief } from "./tutor/tutor-brief.js";
+export type {
+  TutorBrief,
+  TutorBriefDiagnostic,
+  TutorBriefInput,
+  TutorBriefLesson,
+  TutorBriefTraceEvent,
+  TutorBriefWorkedExample,
+} from "./tutor/tutor-brief.js";
+export type {
+  VoiceTutorEvent,
+  VoiceTutorEventListener,
+  VoiceTutorInteractionMode,
+  VoiceTutorSession,
+  VoiceTutorStatus,
+} from "./tutor/voice-session.js";
+
 // A5 (#335): the deterministic, offline, template-based `debug` baseline meta-command.
 export { debug } from "./debug.js";
 

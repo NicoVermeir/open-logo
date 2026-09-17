@@ -65,8 +65,11 @@ import {
   createKeyValueStorageAdapter,
   createLessonPaneController,
   createParserHighlighter,
+  createPaneLayoutController,
+  createPaneResizeController,
   createRobotControlPanelController,
   createRobotRunController,
+  createRealtimeVoiceSession,
   createRunController,
   createRunLogController,
   createRunToggleActionHandlers,
@@ -74,6 +77,8 @@ import {
   createTimeoutScheduler,
   createTurtleStateRegion,
   createTutorOutputController,
+  createVoiceTutorController,
+  createVoiceTutorPanelController,
   createWorkerExecutionHost,
   decideExternalSync,
   DEFAULT_RUN_PROGRAM,
@@ -117,6 +122,9 @@ import type {
   WorkedExampleViewItem,
   RunStatus,
   RobotControlPanelView,
+  RealtimeMediaStream,
+  RealtimePeerConnection,
+  VoiceTutorControllerView,
 } from "../src/index.js";
 import { parseBoardRecognitionResponse } from "../src/index.js";
 import { createMBot2BrowserConnector } from "./mbot2-browser.js";
@@ -221,6 +229,86 @@ const tutorOutputPaneElement = assertPresent<HTMLElement>(
 const tutorOutputElement = assertPresent<HTMLElement>(
   document.getElementById("tutor-output"),
   "tutor-output",
+);
+const voiceTutorToggleButton = assertPresent(
+  document.getElementById("voice-tutor-toggle"),
+  "voice-tutor-toggle",
+  (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const voiceTutorModeSelect = assertPresent(
+  document.getElementById("voice-tutor-mode"),
+  "voice-tutor-mode",
+  (value): value is HTMLSelectElement => value instanceof HTMLSelectElement,
+);
+const voiceTutorMuteButton = assertPresent(
+  document.getElementById("voice-tutor-mute"),
+  "voice-tutor-mute",
+  (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const voiceTutorCancelTurnButton = assertPresent(
+  document.getElementById("voice-tutor-cancel-turn"),
+  "voice-tutor-cancel-turn",
+  (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const voiceTutorMoreButton = assertPresent(
+  document.getElementById("voice-tutor-more"),
+  "voice-tutor-more",
+  (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const voiceTutorRepeatButton = assertPresent(
+  document.getElementById("voice-tutor-repeat"),
+  "voice-tutor-repeat",
+  (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const voiceTutorNextHintButton = assertPresent(
+  document.getElementById("voice-tutor-next-hint"),
+  "voice-tutor-next-hint",
+  (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const voiceTutorStatusElement = assertPresent<HTMLElement>(
+  document.getElementById("voice-tutor-status"),
+  "voice-tutor-status",
+);
+const voiceTutorTranscriptElement = assertPresent<HTMLOListElement>(
+  document.getElementById("voice-tutor-transcript"),
+  "voice-tutor-transcript",
+);
+const voiceTutorAudioElement = assertPresent(
+  document.getElementById("voice-tutor-audio"),
+  "voice-tutor-audio",
+  (value): value is HTMLAudioElement => value instanceof HTMLAudioElement,
+);
+const voiceTutorElement = assertPresent<HTMLElement>(
+  document.getElementById("voice-tutor"),
+  "voice-tutor",
+);
+const voiceTutorLauncherButton = assertPresent(
+  document.getElementById("voice-tutor-launcher"),
+  "voice-tutor-launcher",
+  (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const lessonPaneSizeInput = assertPresent(
+  document.getElementById("lesson-pane-size"),
+  "lesson-pane-size",
+  (value): value is HTMLInputElement => value instanceof HTMLInputElement,
+);
+const editorPaneSizeInput = assertPresent(
+  document.getElementById("editor-pane-size"),
+  "editor-pane-size",
+  (value): value is HTMLInputElement => value instanceof HTMLInputElement,
+);
+const turtlePaneSizeInput = assertPresent(
+  document.getElementById("turtle-pane-size"),
+  "turtle-pane-size",
+  (value): value is HTMLInputElement => value instanceof HTMLInputElement,
+);
+const lessonEditorResizer = assertPresent<HTMLElement>(
+  document.getElementById("lesson-editor-resizer"),
+  "lesson-editor-resizer",
+);
+const editorTurtleResizer = assertPresent<HTMLElement>(
+  document.getElementById("editor-turtle-resizer"),
+  "editor-turtle-resizer",
 );
 const turtleStateElement = assertPresent<HTMLElement>(
   document.getElementById("turtle-state"),
@@ -997,6 +1085,140 @@ document.addEventListener("visibilitychange", () =>
   robotControls.resetPlayButton(),
 );
 mountRunController(shell, runController);
+const voiceTutorSession = createRealtimeVoiceSession({
+  fetch: (input, init) => fetch(input, init),
+  createPeerConnection: () =>
+    new RTCPeerConnection() as unknown as RealtimePeerConnection,
+  getUserMedia: async () =>
+    (await navigator.mediaDevices.getUserMedia({
+      audio: true,
+    })) as unknown as RealtimeMediaStream,
+  audioSink: {
+    setStream: (stream) => {
+      voiceTutorAudioElement.srcObject =
+        stream as unknown as MediaStream | null;
+    },
+  },
+});
+const voiceTutor = createVoiceTutorController({
+  state,
+  session: voiceTutorSession,
+  runController,
+  scheduleGroundingUpdate(update, delayMilliseconds) {
+    const timeout = window.setTimeout(update, delayMilliseconds);
+    return () => window.clearTimeout(timeout);
+  },
+});
+const voiceTutorPanel = createVoiceTutorPanelController();
+voiceTutorLauncherButton.addEventListener("click", () => {
+  voiceTutorPanel.toggle();
+});
+const paneLayout = createPaneLayoutController(window.localStorage);
+const paneResize = createPaneResizeController(paneLayout);
+lessonPaneSizeInput.addEventListener("input", () => {
+  paneLayout.setShare("lesson", lessonPaneSizeInput.valueAsNumber);
+});
+editorPaneSizeInput.addEventListener("input", () => {
+  paneLayout.setShare("editor", editorPaneSizeInput.valueAsNumber);
+});
+turtlePaneSizeInput.addEventListener("input", () => {
+  paneLayout.setShare("turtle", turtlePaneSizeInput.valueAsNumber);
+});
+function attachPaneResizer(
+  element: HTMLElement,
+  leftPane: "lesson" | "editor",
+  rightPane: "editor" | "turtle",
+): void {
+  element.addEventListener("pointerdown", (event) => {
+    element.setPointerCapture(event.pointerId);
+    paneResize.start(
+      leftPane,
+      rightPane,
+      event.clientX,
+      document.documentElement.clientWidth,
+    );
+  });
+  element.addEventListener("pointermove", (event) => {
+    if (!element.hasPointerCapture(event.pointerId)) return;
+    paneResize.move(event.clientX);
+  });
+  const stopResize = (event: PointerEvent) => {
+    if (element.hasPointerCapture(event.pointerId)) {
+      element.releasePointerCapture(event.pointerId);
+    }
+    paneResize.stop();
+  };
+  element.addEventListener("pointerup", stopResize);
+  element.addEventListener("pointercancel", stopResize);
+}
+attachPaneResizer(lessonEditorResizer, "lesson", "editor");
+attachPaneResizer(editorTurtleResizer, "editor", "turtle");
+voiceTutorToggleButton.addEventListener("pointerdown", (event) => {
+  if (voiceTutor.getView().interactionMode !== "push-to-talk") return;
+  event.preventDefault();
+  voiceTutorToggleButton.setPointerCapture(event.pointerId);
+  void voiceTutor.startListening();
+});
+voiceTutorToggleButton.addEventListener("pointerup", (event) => {
+  if (voiceTutor.getView().interactionMode !== "push-to-talk") return;
+  voiceTutorToggleButton.releasePointerCapture(event.pointerId);
+  void voiceTutor.finishListening();
+});
+voiceTutorToggleButton.addEventListener("pointercancel", () => {
+  if (voiceTutor.getView().interactionMode !== "push-to-talk") return;
+  void voiceTutor.cancelTurn();
+});
+voiceTutorToggleButton.addEventListener("keydown", (event) => {
+  if (
+    voiceTutor.getView().interactionMode === "push-to-talk" &&
+    (event.code === "Space" || event.code === "Enter") &&
+    !event.repeat
+  ) {
+    event.preventDefault();
+    void voiceTutor.startListening();
+  }
+});
+voiceTutorToggleButton.addEventListener("keyup", (event) => {
+  if (
+    voiceTutor.getView().interactionMode === "push-to-talk" &&
+    (event.code === "Space" || event.code === "Enter")
+  ) {
+    event.preventDefault();
+    void voiceTutor.finishListening();
+  }
+});
+voiceTutorToggleButton.addEventListener("click", () => {
+  if (voiceTutor.getView().interactionMode === "conversation") {
+    void voiceTutor.toggleEnabled();
+  }
+});
+voiceTutorModeSelect.addEventListener("change", () => {
+  void voiceTutor.setInteractionMode(
+    voiceTutorModeSelect.value === "push-to-talk"
+      ? "push-to-talk"
+      : "conversation",
+  );
+});
+voiceTutorMuteButton.addEventListener("click", () => {
+  void voiceTutor.toggleMuted();
+});
+voiceTutorCancelTurnButton.addEventListener("click", () => {
+  const { status } = voiceTutor.getView();
+  if (status === "speaking" || status === "thinking") {
+    void voiceTutor.stopTutor();
+  } else {
+    void voiceTutor.cancelTurn();
+  }
+});
+voiceTutorMoreButton.addEventListener("click", () => {
+  void voiceTutor.tellMeMore();
+});
+voiceTutorRepeatButton.addEventListener("click", () => {
+  void voiceTutor.sayThatAgain();
+});
+voiceTutorNextHintButton.addEventListener("click", () => {
+  void voiceTutor.giveAnotherHint();
+});
 
 let cameraCaptureRevision = 0;
 interface CameraCapture {
@@ -1401,6 +1623,72 @@ function renderLessonPane(element: HTMLElement, view: LessonPaneView): void {
   );
 }
 
+function renderVoiceTutor(view: VoiceTutorControllerView): void {
+  voiceTutorModeSelect.value = view.interactionMode;
+  voiceTutorToggleButton.ariaPressed = String(view.primaryActionPressed);
+  voiceTutorToggleButton.textContent = view.primaryActionLabel;
+  voiceTutorToggleButton.disabled = !view.canTalk;
+  voiceTutorMuteButton.ariaPressed = String(view.muted);
+  voiceTutorMuteButton.disabled = !view.enabled;
+  voiceTutorMuteButton.textContent = view.muted ? "Unmute" : "Mute";
+  const canCancel =
+    view.status === "listening" ||
+    view.status === "thinking" ||
+    view.status === "speaking";
+  voiceTutorCancelTurnButton.disabled = !canCancel;
+  voiceTutorCancelTurnButton.textContent =
+    view.status === "listening" ? "Cancel turn" : "Stop tutor";
+  voiceTutorMoreButton.disabled = !view.canExpandResponse;
+  voiceTutorRepeatButton.disabled = !view.canExpandResponse;
+  voiceTutorNextHintButton.disabled = !view.canRequestHint;
+  voiceTutorStatusElement.dataset.status = view.status;
+  voiceTutorLauncherButton.dataset.status = view.status;
+  voiceTutorStatusElement.textContent = view.statusText;
+  voiceTutorTranscriptElement.replaceChildren(
+    ...view.transcript.map((entry) => {
+      const item = document.createElement("li");
+      item.className = `voice-tutor-message voice-tutor-message--${entry.speaker}`;
+      if (!entry.final) item.classList.add("voice-tutor-message--live");
+      item.setAttribute("aria-label", entry.label);
+      const speaker = document.createElement("strong");
+      speaker.textContent = entry.speaker === "learner" ? "You" : "Tutor";
+      const message = document.createElement("span");
+      message.textContent = `${entry.text}${entry.interrupted ? " (interrupted)" : ""}`;
+      item.append(speaker, message);
+      return item;
+    }),
+  );
+  voiceTutorTranscriptElement.scrollTop =
+    voiceTutorTranscriptElement.scrollHeight;
+}
+
+function renderVoiceTutorPanel(
+  view: ReturnType<typeof voiceTutorPanel.getView>,
+): void {
+  voiceTutorElement.hidden = !view.expanded;
+  voiceTutorLauncherButton.ariaExpanded = String(view.expanded);
+  voiceTutorLauncherButton.ariaLabel = view.actionLabel;
+  voiceTutorLauncherButton.title = view.actionLabel;
+}
+
+function renderPaneLayout(view: ReturnType<typeof paneLayout.getView>): void {
+  document.documentElement.style.setProperty(
+    "--lesson-pane-share",
+    `${view.lesson}fr`,
+  );
+  document.documentElement.style.setProperty(
+    "--editor-pane-share",
+    `${view.editor}fr`,
+  );
+  document.documentElement.style.setProperty(
+    "--turtle-pane-share",
+    `${view.turtle}fr`,
+  );
+  lessonPaneSizeInput.value = String(view.lesson);
+  editorPaneSizeInput.value = String(view.editor);
+  turtlePaneSizeInput.value = String(view.turtle);
+}
+
 /** #317 — tracks the diagnostics list last synced into CM6's {@link diagnosticsField}, so the
  * `state.subscribe` callback below only dispatches a fresh {@link setDiagnosticsEffect} when the
  * store's `diagnostics` reference actually changed — mirroring `needsExternalSync`'s guard against
@@ -1455,6 +1743,9 @@ tutorOutput.subscribeEntries(() => {
     tutorOutput.getEntries(),
   );
 });
+voiceTutor.subscribe(renderVoiceTutor);
+voiceTutorPanel.subscribe(renderVoiceTutorPanel);
+paneLayout.subscribe(renderPaneLayout);
 runStatusElement.textContent = mapRunStatusToLabel(state.getState().runStatus);
 renderRunToggleButton(state.getState().runStatus);
 outputElement.textContent = formatOutput(state.getState().output);
@@ -1477,3 +1768,6 @@ speedDescriptionElement.textContent = describeSpeedTickDelayMs(
   mapSpeedSliderValueToTickDelayMs(state.getState().speedSliderValue),
 );
 renderLessonPane(lessonPaneElement, lessonPane.getView());
+renderVoiceTutor(voiceTutor.getView());
+renderVoiceTutorPanel(voiceTutorPanel.getView());
+renderPaneLayout(paneLayout.getView());
