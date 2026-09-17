@@ -33,6 +33,34 @@ function simulateQuarterTurnUndertravel(commandedDegrees) {
   return commandedDegrees;
 }
 
+test("shows each learner motion command once before physical execution", async () => {
+  const state = createStudioState({
+    source: "pen_down\nforward 40\nright 90\npen_up",
+  });
+  const calls = [];
+
+  await runRobotProgram(
+    {
+      connected: true,
+      showStatus: async (text) => calls.push(["screen", text]),
+      setPenDown: async (down) => calls.push(["pen", down]),
+      moveCentimeters: async (distance) => calls.push(["move", distance]),
+      turnDegrees: async (angle) => calls.push(["turn", angle]),
+    },
+    { state, repaint() {}, cancelled: () => false },
+  );
+
+  assert.deepEqual(
+    calls.filter(([kind]) => kind === "screen"),
+    [
+      ["screen", "pen_down"],
+      ["screen", "forward 40"],
+      ["screen", "right 90"],
+      ["screen", "pen_up"],
+    ],
+  );
+});
+
 test("polygon corners keep the offset pen on every virtual vertex", async () => {
   for (const sideCount of [3, 4]) {
     for (const command of ["right", "left"]) {

@@ -66,7 +66,8 @@ export async function runRobotProgram(
   if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
     throw new Error("Fix the program diagnostics before running on the robot.");
   }
-  const lines = source.split("\n");
+  const sourceLines = source.split("\n");
+  const lines = [...sourceLines];
   const wrappers = new Map<
     string,
     { span: SourceSpan; command: "left" | "right" }
@@ -209,6 +210,22 @@ export async function runRobotProgram(
     if (cancelled()) throw new Error("Robot run stopped.");
     if (!robot.connected) throw new Error("Robot disconnected during the run.");
   };
+  const sourceCommand = (span: SourceSpan): string => {
+    const [startLine, startColumn] = span.start;
+    const [endLine, endColumn] = span.end;
+    const commandLines = sourceLines.slice(startLine - 1, endLine);
+    commandLines[0] = commandLines[0]!.slice(startColumn - 1);
+    commandLines[commandLines.length - 1] = commandLines[
+      commandLines.length - 1
+    ]!.slice(0, endColumn - (startLine === endLine ? startColumn : 1));
+    return commandLines.join(" ").replaceAll(/\s+/g, " ").trim();
+  };
+  const showCommand = robot.showStatus
+    ? async (event: TraceEvent): Promise<void> => {
+        await robot.showStatus!(sourceCommand(event.source_span));
+        checkActive();
+      }
+    : undefined;
   const apply = (event: TraceEvent): void => {
     state.setTurtleWorld(
       reduceTurtleWorldState(state.getState().turtleWorld, event),
@@ -227,6 +244,7 @@ export async function runRobotProgram(
     if (event.kind === "turn") {
       const plan = turnPlans.get(event.seq)!;
       if (plan.length > 0) {
+        if (showCommand) await showCommand(event);
         await robot.setPenDown(false, penSettings);
         checkActive();
         for (const motion of plan) {
@@ -252,6 +270,7 @@ export async function runRobotProgram(
       const drawing =
         following?.kind === "draw-segment" ? following : undefined;
       checkActive();
+      if (showCommand) await showCommand(event);
       await robot.moveCentimeters(amount / 10, cancelled);
       checkActive();
       apply(event);
@@ -260,6 +279,7 @@ export async function runRobotProgram(
       if (drawing !== undefined) index++;
     } else {
       if (event.kind === "pen-change") {
+        if (showCommand) await showCommand(event);
         await robot.setPenDown(
           (event.payload as PenChangePayload).to === "down",
           penSettings,

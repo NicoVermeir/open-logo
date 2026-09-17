@@ -30,12 +30,23 @@ test("captures, recognizes, and runs the generated program in order", async () =
       calls.push("run");
       return true;
     }),
-    { onStateChange: (state) => states.push(state.status) },
+    {
+      onStateChange: (state) => states.push(state.status),
+      reportStatus: async (text) => calls.push(`screen:${text}`),
+    },
   );
 
   await controller.run();
 
-  assert.deepEqual(calls, ["capture", "recognize", "run"]);
+  assert.deepEqual(calls, [
+    "screen:Taking photo",
+    "capture",
+    "screen:Reading board",
+    "recognize",
+    "screen:Running",
+    "run",
+    "screen:Done",
+  ]);
   assert.deepEqual(states, [
     "capturing",
     "recognizing",

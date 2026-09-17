@@ -43,9 +43,11 @@ test("pen calibration uses absolute targets in either servo direction without ex
 });
 
 function createTransport() {
+  const scripts = [];
   const expressions = [];
   let connected = true;
   return {
+    scripts,
     expressions,
     transport: {
       deviceName: "mBot2 classroom",
@@ -55,7 +57,8 @@ function createTransport() {
       run: assert.fail,
       async evaluate(expression) {
         expressions.push(expression);
-        return expression.startsWith("(mbot2.")
+        return expression.startsWith("(mbot2.") ||
+          expression.startsWith("(cyberpi.display.")
           ? 1
           : expression.includes("battery")
             ? 87
@@ -215,6 +218,21 @@ test("reads basic status and delegates connection state", async () => {
   assert.equal(robot.connected, false);
 });
 
+test("clears and shows bounded status text on the CyberPi display", async () => {
+  const fake = createTransport();
+  const robot = createMBot2ManualRobot(fake.transport);
+
+  await robot.showStatus('Running "forward" 123456789012345678901234567890');
+
+  assert.deepEqual(fake.expressions, [
+    `(cyberpi.display.clear(),cyberpi.display.show_label("Running \\"forward\\" 1234567890123456789012",16,0,40,0),1)[2]`,
+  ]);
+  fake.transport.evaluate = async () => undefined;
+  await assert.rejects(robot.showStatus("Done"), /not acknowledged/);
+  fake.transport.disconnect();
+  await assert.rejects(robot.showStatus("Done"), /disconnected/);
+});
+
 test("returns no reading for non-numeric sensor responses", async () => {
   const fake = createTransport();
   fake.transport.evaluate = async () => "unknown";
@@ -239,6 +257,7 @@ test("precise movement waits for a robot response and rejects missing acknowledg
   const movement = robot.moveCentimeters(-4).then(() => {
     finished = true;
   });
+  assert.deepEqual(fake.expressions, ["(mbot2.straight(-4,speed=30),1)[1]"]);
   await Promise.resolve();
   assert.equal(finished, false);
   acknowledge(1);
@@ -252,56 +271,10 @@ test("precise movement waits for a robot response and rejects missing acknowledg
     "(mbot2.turn(-20,speed=30),1)[1]",
   ]);
   assert.deepEqual(timeouts, [5_000, 5_000]);
+  await assert.rejects(robot.turnDegrees(Number.NaN), /bounded/);
 });
 
-test("precise movement sends one full request per phase with scaled timeouts and bounded inputs", async () => {
-  const fake = createTransport();
-  const timeouts = [];
-  fake.transport.evaluate = async (expression, timeoutMilliseconds) => {
-    fake.expressions.push(expression);
-    timeouts.push(timeoutMilliseconds);
-    return 1;
-  };
-  const robot = createMBot2ManualRobot(fake.transport);
-
-  await robot.moveCentimeters(10);
-  await robot.moveCentimeters(-15.2);
-  await robot.turnDegrees(91);
-  await robot.turnDegrees(-367);
-  for (const direction of [1, -1]) {
-    await robot.moveCentimeters(direction * 1_000);
-    await robot.turnDegrees(direction * 5_000);
-  }
-  for (const amount of [0, -0]) {
-    await robot.moveCentimeters(amount);
-    await robot.turnDegrees(amount);
-  }
-  for (const amount of [Number.NaN, Infinity, -Infinity]) {
-    await assert.rejects(robot.moveCentimeters(amount), /bounded/);
-    await assert.rejects(robot.turnDegrees(amount), /bounded/);
-  }
-  for (const direction of [1, -1]) {
-    await assert.rejects(robot.moveCentimeters(direction * 1_000.1), /bounded/);
-    await assert.rejects(robot.turnDegrees(direction * 5_000.1), /bounded/);
-  }
-
-  assert.deepEqual(fake.expressions, [
-    "(mbot2.straight(10,speed=30),1)[1]",
-    "(mbot2.straight(-15.2,speed=30),1)[1]",
-    "(mbot2.turn(91,speed=30),1)[1]",
-    "(mbot2.turn(-367,speed=30),1)[1]",
-    "(mbot2.straight(1000,speed=30),1)[1]",
-    "(mbot2.turn(5000,speed=30),1)[1]",
-    "(mbot2.straight(-1000,speed=30),1)[1]",
-    "(mbot2.turn(-5000,speed=30),1)[1]",
-  ]);
-  assert.deepEqual(
-    timeouts,
-    [8_000, 11_000, 13_000, 40_000, 503_000, 503_000, 503_000, 503_000],
-  );
-});
-
-test("precise movement checks cancellation before dispatch and after the full motion acknowledgement", async () => {
+test("precise movement observes cancellation after the whole firmware phase", async () => {
   const fake = createTransport();
   let cancelled = false;
   fake.transport.evaluate = async (expression) => {
@@ -312,25 +285,79 @@ test("precise movement checks cancellation before dispatch and after the full mo
   const robot = createMBot2ManualRobot(fake.transport);
 
   await assert.rejects(
-    robot.moveCentimeters(6, () => true),
-    /stopped/,
-  );
-  await assert.rejects(
-    robot.turnDegrees(90, () => true),
-    /stopped/,
-  );
-  assert.deepEqual(fake.expressions, []);
-  await assert.rejects(
     robot.moveCentimeters(6, () => cancelled),
     /stopped/,
   );
-  cancelled = false;
+  assert.deepEqual(fake.expressions, ["(mbot2.straight(6,speed=30),1)[1]"]);
+});
+
+test("screen updates preserve one complete request per straight or turn phase", async () => {
+  const fake = createTransport();
+  const timeouts = [];
+  fake.transport.evaluate = async (expression, timeoutMilliseconds) => {
+    fake.expressions.push(expression);
+    timeouts.push(timeoutMilliseconds);
+    return 1;
+  };
+  const robot = createMBot2ManualRobot(fake.transport);
+  await robot.showStatus("forward 105");
+  for (const amount of [10.5, -10.5, 0.5, 1000, -1000])
+    await robot.moveCentimeters(amount);
+  for (const amount of [91, -91, 367, -367, 5000, -5000])
+    await robot.turnDegrees(amount);
+
+  assert.deepEqual(fake.expressions, [
+    '(cyberpi.display.clear(),cyberpi.display.show_label("forward 105",16,0,40,0),1)[2]',
+    "(mbot2.straight(10.5,speed=30),1)[1]",
+    "(mbot2.straight(-10.5,speed=30),1)[1]",
+    "(mbot2.straight(0.5,speed=30),1)[1]",
+    "(mbot2.straight(1000,speed=30),1)[1]",
+    "(mbot2.straight(-1000,speed=30),1)[1]",
+    "(mbot2.turn(91,speed=30),1)[1]",
+    "(mbot2.turn(-91,speed=30),1)[1]",
+    "(mbot2.turn(367,speed=30),1)[1]",
+    "(mbot2.turn(-367,speed=30),1)[1]",
+    "(mbot2.turn(5000,speed=30),1)[1]",
+    "(mbot2.turn(-5000,speed=30),1)[1]",
+  ]);
+  assert.deepEqual(timeouts, [
+    undefined,
+    9_000,
+    9_000,
+    4_000,
+    503_000,
+    503_000,
+    13_000,
+    13_000,
+    40_000,
+    40_000,
+    503_000,
+    503_000,
+  ]);
+  assert.deepEqual(fake.scripts, []);
+});
+
+test("precise movement rejects unsafe amounts and checks activity without subdividing", async () => {
+  const fake = createTransport();
+  const robot = createMBot2ManualRobot(fake.transport);
+  for (const amount of [NaN, Infinity, -Infinity, 1000.01, -1000.01])
+    await assert.rejects(robot.moveCentimeters(amount), /bounded/);
+  for (const amount of [NaN, Infinity, -Infinity, 5000.01, -5000.01])
+    await assert.rejects(robot.turnDegrees(amount), /bounded/);
+  await robot.moveCentimeters(0);
+  await robot.turnDegrees(0);
   await assert.rejects(
-    robot.turnDegrees(90, () => cancelled),
+    robot.moveCentimeters(6, () => true),
     /stopped/,
   );
-  assert.deepEqual(fake.expressions, [
-    "(mbot2.straight(6,speed=30),1)[1]",
-    "(mbot2.turn(90,speed=30),1)[1]",
-  ]);
+  assert.deepEqual(fake.expressions, []);
+
+  fake.transport.evaluate = async (expression) => {
+    fake.expressions.push(expression);
+    fake.transport.disconnect();
+    return 1;
+  };
+  await assert.rejects(robot.turnDegrees(91), /disconnected/);
+  await assert.rejects(robot.moveCentimeters(6), /disconnected/);
+  assert.deepEqual(fake.expressions, ["(mbot2.turn(91,speed=30),1)[1]"]);
 });

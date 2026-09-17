@@ -4,6 +4,8 @@ export const MBOT2_MINIMUM_SPEED = 10;
 export const MBOT2_MAXIMUM_SPEED = 100;
 export const MBOT2_MINIMUM_DURATION_SECONDS = 0.1;
 export const MBOT2_MAXIMUM_DURATION_SECONDS = 2;
+export const MBOT2_MAXIMUM_STRAIGHT_SEGMENT_CENTIMETERS = 2;
+export const MBOT2_MAXIMUM_TURN_SEGMENT_DEGREES = 10;
 
 export interface RobotPenSettings {
   downAngle: number;
@@ -62,6 +64,7 @@ export function robotPenAngle(
 export interface MBot2ManualRobot {
   readonly deviceName: string;
   readonly connected: boolean;
+  showStatus?(text: string): Promise<void>;
   forward(speed: number, durationSeconds: number): Promise<void>;
   backward(speed: number, durationSeconds: number): Promise<void>;
   turnLeft(speed: number, durationSeconds: number): Promise<void>;
@@ -131,6 +134,15 @@ export function createMBot2ManualRobot(
     get connected() {
       return transport.connected;
     },
+    showStatus: async (text) => {
+      if (!transport.connected) throw new Error("The robot disconnected.");
+      const screenText = text.slice(0, 40);
+      const response = await transport.evaluate(
+        `(cyberpi.display.clear(),cyberpi.display.show_label(${JSON.stringify(screenText)},16,0,40,0),1)[2]`,
+      );
+      if (response !== 1)
+        throw new Error("Robot screen update was not acknowledged.");
+    },
     forward: (speed, durationSeconds) =>
       move("forward", speed, durationSeconds),
     backward: (speed, durationSeconds) =>
@@ -140,9 +152,21 @@ export function createMBot2ManualRobot(
     turnRight: (speed, durationSeconds) =>
       move("turn_right", speed, durationSeconds),
     moveCentimeters: (distance, cancelled) =>
-      acknowledgedMotion(transport, "straight", distance, 1_000, cancelled),
+      acknowledgedMotion(
+        transport,
+        "straight",
+        distance,
+        MBOT2_MAXIMUM_STRAIGHT_SEGMENT_CENTIMETERS,
+        cancelled,
+      ),
     turnDegrees: (angle, cancelled) =>
-      acknowledgedMotion(transport, "turn", angle, 5_000, cancelled),
+      acknowledgedMotion(
+        transport,
+        "turn",
+        angle,
+        MBOT2_MAXIMUM_TURN_SEGMENT_DEGREES,
+        cancelled,
+      ),
     setPenAngle,
     setPenDown: async (down, settings) =>
       setPenAngle(robotPenAngle(down, settings), settings.settleMilliseconds),
@@ -163,25 +187,26 @@ async function acknowledgedMotion(
   transport: MBot2WebBluetoothTransport,
   command: "straight" | "turn",
   amount: number,
-  maximum: number,
+  maximumSegmentSize: number,
   cancelled: () => boolean = () => false,
 ): Promise<void> {
-  if (!Number.isFinite(amount) || Math.abs(amount) > maximum) {
-    throw new Error("Robot movement exceeds the bounded motion limit.");
+  if (!Number.isFinite(amount) || Math.abs(amount) > maximumSegmentSize * 500) {
+    throw new Error("Robot movement exceeds the bounded motion size.");
   }
   if (cancelled()) throw new Error("Robot run stopped.");
+  if (!transport.connected) throw new Error("The robot disconnected.");
   if (amount === 0) return;
   const response = await transport.evaluate(
     `(mbot2.${command}(${amount},speed=30),1)[1]`,
-    3_000 +
-      Math.ceil(Math.abs(amount) / (command === "straight" ? 2 : 10)) * 1_000,
+    3_000 + Math.ceil(Math.abs(amount) / maximumSegmentSize) * 1_000,
   );
+  if (cancelled()) throw new Error("Robot run stopped.");
+  if (!transport.connected) throw new Error("The robot disconnected.");
   if (response !== 1) {
     throw new Error(
       "Robot movement was not acknowledged. Check the robot before running again.",
     );
   }
-  if (cancelled()) throw new Error("Robot run stopped.");
 }
 
 function clampInteger(value: number, minimum: number, maximum: number): number {

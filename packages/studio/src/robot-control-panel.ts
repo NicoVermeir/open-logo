@@ -35,6 +35,7 @@ export interface RobotControlPanelController {
   disconnect(): Promise<void>;
   move(direction: RobotMovement): Promise<void>;
   stop(): Promise<void>;
+  showStatus(text: string): Promise<void>;
   refreshStatus(): Promise<void>;
   setPenSettings(settings: Partial<RobotPenSettings>): void;
   confirmPenSettings(): void;
@@ -278,6 +279,14 @@ export function createRobotControlPanelController(
     stop() {
       cancelProgram?.();
       return runAction(() => robot!.stop(), true, true);
+    },
+    showStatus(text) {
+      return runAction(
+        () => robot!.showStatus?.(text) ?? Promise.resolve(),
+        false,
+        true,
+        false,
+      );
     },
     refreshStatus() {
       if (executionLocked()) return Promise.resolve();

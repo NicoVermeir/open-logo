@@ -21,30 +21,8 @@ locally and delegates recognition to an injected `@openlogo/board-reader` LLM pr
 **Camera to turtlebot** demo action captures one camera frame, imports the recognized program into
 the editor, and runs it through the same robot preflight and execution path as **Run on turtlebot**.
 The demo action is enabled only after the robot is connected and pen calibration is confirmed;
-camera or recognition failures stop the sequence before robot execution. A live status beneath the
-camera button explains missing prerequisites and reports each stage: camera permission and frame
-capture (1/3), LLM recognition (2/3), and robot execution awaiting acknowledgements (3/3). Completion
-or the specific failure remains visible until the next camera attempt or reset/stop, including
-camera permission, recognition service, and robot preflight errors.
-
-Choose a camera in **Webcam** when multiple devices are connected. **Automatic** keeps the
-browser's default selection, preferring a rear-facing camera. Select **Preview** to aim at the board
-using a live, unmirrored view of the full frame. Preview requires camera permission but does not
-require a robot connection or calibration, recognize an image, or move the robot. Switching webcams
-restarts the preview on the selected device. **Camera to turtlebot** captures the displayed frame
-without reopening the camera, then closes the preview before recognition. Without a preview, it
-continues to request the camera for a single capture.
-
-**Stop preview**, **Reset**, or leaving the page releases the preview stream. A disconnected webcam
-stops the preview and displays a status message. The refresh button requests camera permission to
-reveal available webcams and their names without importing an image or running the robot; its
-temporary stream is stopped immediately. When preview is already live, refresh reuses its permission
-and only updates the device list. Camera selection is locked during preview startup, capture,
-recognition, and execution. Connecting or removing a webcam refreshes the list where supported;
-removing the selected device stops its preview and falls back to Automatic. Camera access begins
-only after an explicit Preview, Refresh webcams, or Camera to turtlebot action, never on page load.
-
-In Vite development and local Preview, the built-in `/api/recognize-board` proxy reads `packages/studio/.env.local`,
+camera or recognition failures stop the sequence before robot execution. During
+Vite development, the built-in `/api/recognize-board` proxy reads `packages/studio/.env.local`,
 keeps its short-lived Entra token server-side, and forwards requests to an OpenAI-compatible vision endpoint.
 
 Copy `.env.example` to `.env.local`, set `OPENLOGO_LLM_ENDPOINT` and `OPENLOGO_LLM_MODEL`, then
@@ -52,8 +30,7 @@ run `az login`. The proxy obtains a short-lived Microsoft Entra token with
 `az account get-access-token`; no API key is read or stored. Set `OPENLOGO_AZURE_TENANT_ID` when
 the current Azure CLI tenant is not the Foundry tenant. Generated source is placed in the editor
 but is never executed automatically by the regular image-import action. The camera demo action is
-the deliberate one-click exception. The proxy runs in the development and Preview servers, not in
-the static build output; production
+the deliberate one-click exception. The proxy is a development-server integration; production
 deployments need the same `/api/recognize-board` contract hosted by their backend.
 
 ## mBot2 manual controls
@@ -87,11 +64,10 @@ evaluating an expression twice. Generated names avoid source collisions and keep
 unchanged; wrapper events are hidden from playback. Unsupported commands, profiles, trace effects,
 and invalid arguments are rejected before movement, with the reason shown in the robot panel.
 
-One Logo unit maps to **1 mm**. Studio sends each straight move or turn-compensation phase as one
-acknowledged firmware request at `speed=30`, without subdividing it into stop-start segments.
-The adapter accepts at most 1,000 cm per straight request or 5,000 degrees per turn request.
-Cancellation is checked before dispatch and after acknowledgement. Closing the page may leave the
-entire current motion request in flight; disconnecting is not a guaranteed physical stop.
+One Logo unit maps to **1 mm**. Studio sends one acknowledged firmware request per straight move or
+turn-compensation phase at `speed=30`, without subdividing motion into 20 mm or 10-degree requests.
+Cancellation and connection state are checked before dispatch and after acknowledgement. A full phase
+can remain in flight if the page closes; only the firmware can interrupt a motion already dispatched.
 Separate phases and pen settling still pause; this is not continuous blending between Logo commands.
 The unchanged travel budget allows 500 equivalent segments: each move costs its absolute distance
 divided by 20 mm, each turn phase its absolute angle divided by 10 degrees, rounded up per phase
@@ -108,7 +84,7 @@ Each run treats the current **pen-tip position** as the virtual origin and the c
 heading zero; it does not home the robot. Appearance commands affect only the canvas; pen commands
 also drive the physical servo. Stop cancels subsequent
 phases and requests motor stop, even while a movement response is pending. Firmware may finish the
-entire current move or turn phase before handling Stop; Bluetooth/firmware delays mean this is not an instantaneous
+current bounded request before handling Stop; Bluetooth/firmware delays mean this is not an instantaneous
 safety stop. Reset also clears the virtual run but does not return the physical robot to its start.
 Disconnects or missing acknowledgements abort the run. Manual movement and virtual Run/Step
 cannot overlap a physical program; canvas input is disabled during physical playback.

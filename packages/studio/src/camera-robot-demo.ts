@@ -21,6 +21,7 @@ export interface CameraRobotDemoController {
 
 export interface CameraRobotDemoOptions {
   readonly onStateChange?: (state: CameraRobotDemoState) => void;
+  readonly reportStatus?: (text: string) => Promise<void>;
 }
 
 interface BoardImporter {
@@ -49,6 +50,15 @@ export function createCameraRobotDemoController(
     state = nextState;
     options.onStateChange?.(state);
   };
+  const reportStatus = options.reportStatus
+    ? async (text: string): Promise<void> => {
+        try {
+          await options.reportStatus!(text);
+        } catch {
+          // Screen feedback must not block capture, execution, or emergency reset.
+        }
+      }
+    : undefined;
 
   return {
     getState: () => state,
@@ -64,15 +74,19 @@ export function createCameraRobotDemoController(
       cancellation = (async () => {
         try {
           await robotRunner.reset();
-          if (cancellationRevision === revision)
+          if (cancellationRevision === revision) {
+            if (reportStatus) await reportStatus("Stopped");
             publish({ status: "idle", error: null });
+          }
         } catch (error) {
-          if (cancellationRevision === revision)
+          if (cancellationRevision === revision) {
+            if (reportStatus) await reportStatus("Error");
             publish({
               status: "failed",
               error:
                 error instanceof Error ? error.message : "Robot reset failed.",
             });
+          }
           throw error;
         } finally {
           if (cancellationRevision === revision) active = false;
@@ -89,12 +103,15 @@ export function createCameraRobotDemoController(
       const cancelled = () => currentRevision !== revision;
       try {
         publish({ status: "capturing", error: null });
+        if (reportStatus) await reportStatus("Taking photo");
         const image = await frameSource.captureFrame();
         if (cancelled()) return;
         publish({ status: "recognizing", error: null });
+        if (reportStatus) await reportStatus("Reading board");
         const result = await boardImporter.importImage(image);
         if (cancelled()) return;
         if (result === null) {
+          if (reportStatus) await reportStatus("Error");
           publish({
             status: "failed",
             error:
@@ -103,12 +120,15 @@ export function createCameraRobotDemoController(
           return;
         }
         publish({ status: "running", error: null });
+        if (reportStatus) await reportStatus("Running");
         const completed = await robotRunner.runOnRobot();
         if (cancelled()) return;
         if (!completed) throw new Error("Robot run did not complete.");
+        if (reportStatus) await reportStatus("Done");
         publish({ status: "succeeded", error: null });
       } catch (error) {
         if (cancelled()) return;
+        if (reportStatus) await reportStatus("Error");
         publish({
           status: "failed",
           error:
