@@ -54,6 +54,7 @@ import {
   createA11yAnnouncer,
   createAppShell,
   createBoardImportController,
+  createCameraRobotDemoController,
   createCanvasRenderTarget,
   createCanvasViewController,
   createDiagnosticsController,
@@ -104,6 +105,7 @@ import {
 import type {
   BoardImportState,
   BoardRecognitionProvider,
+  CameraRobotDemoState,
   DiagnosticListItem,
   Canvas2DContext,
   ExecutionWorkerReport,
@@ -117,6 +119,7 @@ import type {
   RunStatus,
   RobotControlPanelView,
 } from "../src/index.js";
+import { parseBoardRecognitionResponse } from "../src/index.js";
 import { createMBot2BrowserConnector } from "./mbot2-browser.js";
 import {
   createLlmBoardRecognitionProvider,
@@ -174,6 +177,45 @@ const boardImageInput = assertPresent(
 const boardImportStatusElement = assertPresent<HTMLElement>(
   document.getElementById("board-import-status"),
   "board-import-status",
+);
+const cameraRobotDemoButton = assertPresent(
+  document.getElementById("camera-robot-demo-button"),
+  "camera-robot-demo-button",
+  (value): value is HTMLButtonElement => value instanceof HTMLButtonElement,
+);
+const cameraRobotDemoStatusElement = assertPresent<HTMLElement>(
+  document.getElementById("camera-robot-demo-status"),
+  "camera-robot-demo-status",
+);
+const cameraDeviceSelect = assertPresent(
+  document.getElementById("camera-device-select"),
+  "camera-device-select",
+  (value): value is HTMLSelectElement => value instanceof HTMLSelectElement,
+);
+const cameraDevicesRefreshButton = assertPresent<HTMLButtonElement>(
+  document.getElementById("camera-devices-refresh-button"),
+  "camera-devices-refresh-button",
+);
+const cameraDeviceStatusElement = assertPresent<HTMLElement>(
+  document.getElementById("camera-device-status"),
+  "camera-device-status",
+);
+const cameraPreviewButton = assertPresent<HTMLButtonElement>(
+  document.getElementById("camera-preview-button"),
+  "camera-preview-button",
+);
+const cameraPreviewLabel = assertPresent<HTMLElement>(
+  document.getElementById("camera-preview-label"),
+  "camera-preview-label",
+);
+const cameraPreviewVideo = assertPresent(
+  document.getElementById("camera-preview"),
+  "camera-preview",
+  (value): value is HTMLVideoElement => value instanceof HTMLVideoElement,
+);
+const cameraPreviewStatus = assertPresent<HTMLElement>(
+  document.getElementById("camera-preview-status"),
+  "camera-preview-status",
 );
 const speedSliderElement = assertPresent(
   document.getElementById("speed-slider"),
@@ -404,11 +446,52 @@ const penCalibrationOutput = assertPresent<HTMLOutputElement>(
   "robot-pen-calibration-status",
 );
 
+let cameraRobotDemoActive = false;
+let cameraDeviceAccessPending = false;
+let cameraPreview: { stream: MediaStream | null; ready: boolean } | undefined;
+let boardImportActive = false;
+let boardImageSelectionActive = false;
+let boardImageDecodeActive = false;
+let boardRecognitionActive = false;
+let boardImportRevision = 0;
+
 function renderRobotControls(view: RobotControlPanelView): void {
   const connected = view.status === "connected";
-  const executionLocked = state.getState().runStatus === "running";
+  const robotOwned = view.robotOwned;
+  const executionLocked =
+    state.getState().runStatus === "running" || cameraRobotDemoActive;
   runOnRobotButton.disabled =
-    view.busy || !connected || executionLocked || !view.penConfirmed;
+    cameraRobotDemoActive ||
+    boardImportActive ||
+    view.busy ||
+    !connected ||
+    executionLocked ||
+    !view.penConfirmed;
+  cameraRobotDemoButton.disabled =
+    cameraRobotDemoActive ||
+    cameraDeviceAccessPending ||
+    cameraPreview?.ready === false ||
+    boardImportActive ||
+    view.busy ||
+    !connected ||
+    executionLocked ||
+    !view.penConfirmed;
+  if (
+    !cameraRobotDemoStatusElement.dataset.status ||
+    cameraRobotDemoStatusElement.dataset.status === "idle"
+  ) {
+    cameraRobotDemoStatusElement.textContent = !connected
+      ? view.status === "disconnected"
+        ? "Connect turtlebot to use the camera."
+        : view.statusMessage
+      : !view.penConfirmed
+        ? "Confirm pen calibration before starting the camera workflow."
+        : view.busy || executionLocked
+          ? "Waiting for the current run or robot command to finish."
+          : boardImportActive
+            ? "Waiting for the current image import to finish."
+            : "Ready to capture a board image and run it on turtlebot.";
+  }
   const penLocked = view.busy || !connected || executionLocked;
   for (const input of Object.values(penInputs)) input.disabled = penLocked;
   for (const button of Object.values(penButtons)) button.disabled = penLocked;
@@ -420,14 +503,15 @@ function renderRobotControls(view: RobotControlPanelView): void {
   penStateOutput.value = view.penState;
   robotElements.status.textContent = view.statusMessage;
   robotElements.connect.disabled =
-    view.busy || connected || view.status === "unsupported";
-  robotElements.disconnect.disabled = view.busy || !connected;
+    view.busy || robotOwned || view.status === "unsupported" || executionLocked;
+  robotElements.disconnect.disabled =
+    !robotOwned || view.status === "disconnecting";
   for (const button of movementButtons)
     button.disabled = view.busy || !connected || executionLocked;
-  robotElements.stop.disabled = !connected;
+  robotElements.stop.disabled = !robotOwned;
   robotElements.refresh.disabled = view.busy || !connected || executionLocked;
-  robotElements.speed.disabled = view.busy || !connected;
-  robotElements.duration.disabled = view.busy || !connected;
+  robotElements.speed.disabled = view.busy || !connected || executionLocked;
+  robotElements.duration.disabled = view.busy || !connected || executionLocked;
   robotElements.speedValue.value = `${view.speed}%`;
   robotElements.battery.value =
     view.battery === undefined ? "--" : `${view.battery}%`;
@@ -468,9 +552,9 @@ robotElements.connect.addEventListener(
   "click",
   () => void robotControls.connect(),
 );
-robotElements.disconnect.addEventListener("click", () =>
-  robotControls.disconnect(),
-);
+robotElements.disconnect.addEventListener("click", () => {
+  void robotControls.disconnect().catch(() => undefined);
+});
 robotElements.forward.addEventListener(
   "click",
   () => void robotControls.move("forward"),
@@ -487,10 +571,17 @@ robotElements.right.addEventListener(
   "click",
   () => void robotControls.move("right"),
 );
-robotElements.stop.addEventListener("click", () => void robotControls.stop());
+robotElements.stop.addEventListener("click", () => {
+  void cameraRobotDemoController
+    .cancel()
+    .then((cancelledCameraDemo) =>
+      cancelledCameraDemo ? undefined : robotControls.stop(),
+    )
+    .catch(() => undefined);
+});
 robotElements.refresh.addEventListener(
   "click",
-  () => void robotControls.refreshStatus(),
+  () => void robotControls.refreshStatus().catch(() => undefined),
 );
 robotElements.speed.addEventListener("input", () =>
   robotControls.setSpeed(Number(robotElements.speed.value)),
@@ -498,7 +589,13 @@ robotElements.speed.addEventListener("input", () =>
 robotElements.duration.addEventListener("change", () =>
   robotControls.setDuration(Number(robotElements.duration.value)),
 );
-window.addEventListener("beforeunload", () => robotControls.dispose());
+window.addEventListener("beforeunload", () => {
+  void cameraRobotDemoController
+    .cancel()
+    .catch(() => undefined)
+    .then(() => robotControls.dispose())
+    .catch(() => undefined);
+});
 
 /**
  * #315 — the CM6 `EditorView`. `editorController` is the same headless seam every other pane
@@ -530,6 +627,7 @@ const boardImportController = createBoardImportController(
   editorController,
   configuredProvider ?? createLlmBoardRecognitionProvider(configuredClient),
   {
+    createCancellationController: () => new AbortController(),
     onStateChange: (importState) => {
       renderBoardImportState(
         importState,
@@ -549,36 +647,71 @@ function createDevProxyBoardRecognitionClient(): LlmBoardRecognitionClient {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(request),
-        signal: signal instanceof AbortSignal ? signal : undefined,
+        signal,
       });
-      const payload: unknown = await response.json();
-      if (!response.ok) {
-        const message =
-          payload && typeof payload === "object" && "error" in payload
-            ? String((payload as { error: unknown }).error)
-            : "LLM board recognition request failed.";
-        throw new Error(message);
-      }
-      return payload;
+      const responseText = await response.text();
+      return parseBoardRecognitionResponse(responseText, response.ok);
     },
   };
 }
 
 boardImportButton.addEventListener("click", () => {
+  boardImageSelectionActive = true;
+  renderBoardImportState(
+    boardImportController.getState(),
+    boardImportStatusElement,
+    boardImportButton,
+  );
   boardImageInput.click();
+});
+boardImageInput.addEventListener("cancel", () => {
+  boardImageSelectionActive = false;
+  renderBoardImportState(
+    boardImportController.getState(),
+    boardImportStatusElement,
+    boardImportButton,
+  );
 });
 boardImageInput.addEventListener("change", () => {
   const file = boardImageInput.files?.[0];
   boardImageInput.value = "";
+  boardImageSelectionActive = false;
   if (file) {
+    const currentRevision = ++boardImportRevision;
+    boardImageDecodeActive = true;
+    renderBoardImportState(
+      boardImportController.getState(),
+      boardImportStatusElement,
+      boardImportButton,
+    );
     void decodeRasterImage(file)
-      .then((image) => boardImportController.importImage(image))
+      .then((image) => {
+        if (currentRevision !== boardImportRevision) return null;
+        boardImageDecodeActive = false;
+        return boardImportController.importImage(image);
+      })
       .catch((error: unknown) => {
+        if (currentRevision !== boardImportRevision) return;
         boardImportStatusElement.textContent =
           error instanceof Error
             ? error.message
             : "Could not read the selected image.";
+      })
+      .finally(() => {
+        if (currentRevision !== boardImportRevision) return;
+        boardImageDecodeActive = false;
+        renderBoardImportState(
+          boardImportController.getState(),
+          boardImportStatusElement,
+          boardImportButton,
+        );
       });
+  } else {
+    renderBoardImportState(
+      boardImportController.getState(),
+      boardImportStatusElement,
+      boardImportButton,
+    );
   }
 });
 
@@ -621,7 +754,13 @@ function renderBoardImportState(
   statusElement: HTMLElement,
   button: HTMLButtonElement,
 ): void {
-  button.disabled = importState.status === "recognizing";
+  boardRecognitionActive = importState.status === "recognizing";
+  boardImportActive =
+    boardImageSelectionActive ||
+    boardImageDecodeActive ||
+    boardRecognitionActive;
+  button.disabled = boardImportActive || cameraRobotDemoActive;
+  renderRobotControls(robotControls.getView());
   statusElement.textContent = {
     idle: "",
     recognizing: "Recognizing board image...",
@@ -868,7 +1007,342 @@ runOnRobotButton.addEventListener(
   "click",
   () => void runController.runOnRobot(),
 );
+const cameraRobotDemoController = createCameraRobotDemoController(
+  { captureFrame: captureCameraFrame, cancelCapture: cancelCameraCapture },
+  boardImportController,
+  {
+    runOnRobot: async () => {
+      const completed = await runController.runOnRobot();
+      if (!completed) {
+        const view = robotControls.getView();
+        throw new Error(
+          state.getState().notice?.message ??
+            (view.status === "error"
+              ? view.statusMessage
+              : "Robot run did not complete."),
+        );
+      }
+      return completed;
+    },
+    reset: () => runController.resetRobot(),
+  },
+  {
+    onStateChange: (demoState) => {
+      renderCameraRobotDemoState(demoState, cameraRobotDemoStatusElement);
+    },
+  },
+);
+cameraRobotDemoButton.addEventListener(
+  "click",
+  () => void cameraRobotDemoController.run(),
+);
 mountRunController(shell, runController);
+
+let cameraCaptureRevision = 0;
+let activeCameraCapture:
+  | {
+      stream: MediaStream | null;
+      video: HTMLVideoElement | null;
+      rejectCancellation(error: Error): void;
+    }
+  | undefined;
+
+void refreshCameraDevices();
+navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  void refreshCameraDevices();
+});
+
+cameraPreviewButton.addEventListener("click", () => {
+  if (cameraPreview) stopCameraPreview();
+  else void startCameraPreview();
+});
+cameraDeviceSelect.addEventListener("change", () => {
+  if (cameraPreview) void startCameraPreview();
+});
+window.addEventListener("pagehide", () => cancelCameraCapture());
+
+function stopCameraPreview(): void {
+  const preview = cameraPreview;
+  cameraPreview = undefined;
+  if (preview) releaseCameraCapture(preview.stream, cameraPreviewVideo);
+  cameraPreviewVideo.hidden = true;
+  cameraPreviewStatus.textContent = "";
+  renderCameraDeviceControls();
+  renderRobotControls(robotControls.getView());
+}
+
+async function startCameraPreview(): Promise<void> {
+  stopCameraPreview();
+  const preview = { stream: null as MediaStream | null, ready: false };
+  cameraPreview = preview;
+  cameraPreviewStatus.textContent = "Waiting for camera permission...";
+  renderCameraDeviceControls();
+  renderRobotControls(robotControls.getView());
+  try {
+    if (!navigator.mediaDevices?.getUserMedia)
+      throw new Error("Camera access is unavailable in this browser.");
+    const selectedDevice = cameraDeviceSelect.value;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: selectedDevice
+        ? { deviceId: { exact: selectedDevice } }
+        : { facingMode: { ideal: "environment" } },
+      audio: false,
+    });
+    if (cameraPreview !== preview) {
+      releaseCameraCapture(stream, null);
+      return;
+    }
+    preview.stream = stream;
+    for (const track of stream.getTracks()) {
+      track.addEventListener(
+        "ended",
+        () => {
+          if (cameraPreview !== preview) return;
+          stopCameraPreview();
+          cameraPreviewStatus.textContent =
+            "The webcam disconnected or stopped.";
+        },
+        { once: true },
+      );
+    }
+    cameraPreviewVideo.srcObject = stream;
+    cameraPreviewVideo.muted = true;
+    cameraPreviewVideo.hidden = false;
+    cameraPreviewStatus.textContent = "Starting camera preview...";
+    await cameraPreviewVideo.play();
+    if (cameraPreview !== preview) return;
+    preview.ready = true;
+    cameraPreviewStatus.textContent = "Camera preview is live.";
+    renderCameraDeviceControls();
+    renderRobotControls(robotControls.getView());
+    void refreshCameraDevices();
+  } catch (error) {
+    if (cameraPreview !== preview) return;
+    stopCameraPreview();
+    cameraPreviewStatus.textContent = `Unable to preview webcam: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+cameraDevicesRefreshButton.addEventListener("click", async () => {
+  cameraDeviceAccessPending = true;
+  renderCameraDeviceControls();
+  renderRobotControls(robotControls.getView());
+  cameraDeviceStatusElement.textContent = "Waiting for camera permission...";
+  try {
+    if (!navigator.mediaDevices?.getUserMedia)
+      throw new Error("Camera access is unavailable in this browser.");
+    if (!cameraPreview) {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      for (const track of stream.getTracks()) track.stop();
+    }
+    await refreshCameraDevices();
+  } catch (error) {
+    cameraDeviceStatusElement.textContent = `Unable to refresh webcams: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    cameraDeviceAccessPending = false;
+    renderCameraDeviceControls();
+    renderRobotControls(robotControls.getView());
+  }
+});
+
+function renderCameraDeviceControls(): void {
+  const disabled =
+    cameraRobotDemoActive ||
+    cameraDeviceAccessPending ||
+    cameraPreview?.ready === false;
+  cameraDeviceSelect.disabled = disabled;
+  cameraDevicesRefreshButton.disabled = disabled;
+  cameraPreviewButton.disabled =
+    cameraRobotDemoActive || cameraDeviceAccessPending;
+  const previewAction = cameraPreview
+    ? "Stop camera preview"
+    : "Start camera preview";
+  cameraPreviewButton.setAttribute("aria-label", previewAction);
+  cameraPreviewButton.setAttribute(
+    "aria-pressed",
+    String(cameraPreview !== undefined),
+  );
+  cameraPreviewButton.title = previewAction;
+  cameraPreviewButton.dataset.icon = cameraPreview ? "stop" : "camera";
+  cameraPreviewLabel.textContent = cameraPreview ? "Stop preview" : "Preview";
+}
+
+async function refreshCameraDevices(): Promise<void> {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    cameraDeviceStatusElement.textContent =
+      "Webcam selection is unavailable in this browser.";
+    return;
+  }
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const selectedDevice = cameraDeviceSelect.value;
+    const cameras = devices.filter(
+      (device) => device.kind === "videoinput" && device.deviceId !== "",
+    );
+    cameraDeviceSelect.replaceChildren(
+      new Option("Automatic", ""),
+      ...cameras.map(
+        (camera, index) =>
+          new Option(camera.label || `Webcam ${index + 1}`, camera.deviceId),
+      ),
+    );
+    if (cameras.some((camera) => camera.deviceId === selectedDevice))
+      cameraDeviceSelect.value = selectedDevice;
+    else if (selectedDevice && cameraPreview) {
+      stopCameraPreview();
+      cameraPreviewStatus.textContent =
+        "The selected webcam is no longer available.";
+    }
+    cameraDeviceStatusElement.textContent = "";
+  } catch (error) {
+    cameraDeviceStatusElement.textContent = `Unable to list webcams: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+function cancelCameraCapture(): void {
+  stopCameraPreview();
+  cameraCaptureRevision++;
+  const capture = activeCameraCapture;
+  if (!capture) return;
+  releaseCameraCapture(capture.stream, capture.video);
+  capture.rejectCancellation(new Error("Camera capture cancelled."));
+  activeCameraCapture = undefined;
+}
+
+async function captureCameraFrame(): Promise<RasterImage> {
+  if (cameraPreview) {
+    try {
+      if (!cameraPreview.ready)
+        throw new Error("The camera preview is not ready yet.");
+      return readCameraFrame(cameraPreviewVideo);
+    } finally {
+      stopCameraPreview();
+    }
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Camera capture is not supported by this browser.");
+  }
+  const revision = ++cameraCaptureRevision;
+  let rejectCancellation!: (error: Error) => void;
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    rejectCancellation = reject;
+  });
+  const capture = {
+    stream: null,
+    video: null,
+    rejectCancellation,
+  };
+  activeCameraCapture = capture;
+  const selectedDevice = cameraDeviceSelect.value;
+  const streamRequest = navigator.mediaDevices.getUserMedia({
+    video: selectedDevice
+      ? { deviceId: { exact: selectedDevice } }
+      : { facingMode: { ideal: "environment" } },
+    audio: false,
+  });
+  try {
+    void streamRequest.then(
+      (stream) => {
+        if (revision !== cameraCaptureRevision)
+          releaseCameraCapture(stream, null);
+      },
+      () => undefined,
+    );
+    const stream = await Promise.race([streamRequest, cancellation]);
+    capture.stream = stream;
+    void refreshCameraDevices();
+    const video = document.createElement("video");
+    capture.video = video;
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+    await Promise.race([video.play(), cancellation]);
+    if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+      let metadataLoaded!: () => void;
+      let metadataFailed!: () => void;
+      await Promise.race([
+        new Promise<void>((resolve, reject) => {
+          metadataLoaded = resolve;
+          metadataFailed = () =>
+            reject(new Error("The camera frame could not be read."));
+          video.addEventListener("loadedmetadata", metadataLoaded, {
+            once: true,
+          });
+          video.addEventListener("error", metadataFailed, { once: true });
+        }),
+        cancellation,
+      ]).finally(() => {
+        video.removeEventListener("loadedmetadata", metadataLoaded);
+        video.removeEventListener("error", metadataFailed);
+      });
+    }
+    return readCameraFrame(video);
+  } finally {
+    releaseCameraCapture(capture.stream, capture.video);
+    if (activeCameraCapture === capture) activeCameraCapture = undefined;
+  }
+}
+
+function readCameraFrame(video: HTMLVideoElement): RasterImage {
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const context = canvas.getContext("2d");
+  if (!context || canvas.width === 0 || canvas.height === 0) {
+    throw new Error("The camera did not provide a usable frame.");
+  }
+  context.drawImage(video, 0, 0);
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  return {
+    width: imageData.width,
+    height: imageData.height,
+    rgba: new Uint8Array(imageData.data),
+    encodedImageBase64: canvas.toDataURL("image/jpeg", 0.92).split(",")[1],
+    mimeType: "image/jpeg",
+  };
+}
+
+function releaseCameraCapture(
+  stream: MediaStream | null,
+  video: HTMLVideoElement | null,
+): void {
+  if (stream) {
+    for (const track of stream.getTracks()) track.stop();
+  }
+  if (video) video.srcObject = null;
+}
+
+function renderCameraRobotDemoState(
+  demoState: CameraRobotDemoState,
+  statusElement: HTMLElement,
+): void {
+  statusElement.dataset.status = demoState.status;
+  cameraRobotDemoActive = ["capturing", "recognizing", "running"].includes(
+    demoState.status,
+  );
+  renderCameraDeviceControls();
+  renderBoardImportState(
+    boardImportController.getState(),
+    boardImportStatusElement,
+    boardImportButton,
+  );
+  renderRobotControls(robotControls.getView());
+  renderRunToggleButton(state.getState().runStatus);
+  if (demoState.status === "idle") return;
+  statusElement.textContent = {
+    capturing:
+      "Step 1 of 3: Waiting for camera permission and a board image...",
+    recognizing:
+      "Step 2 of 3: Sending the image to the LLM and waiting for recognition...",
+    running:
+      "Step 3 of 3: Running on turtlebot; waiting for robot acknowledgements...",
+    succeeded: "Recognized program completed on turtlebot.",
+    failed: `Camera to turtlebot failed: ${demoState.error ?? "Unknown error."}`,
+  }[demoState.status];
+}
 /**
  * #952 — the studio's keyboard and pointer input, so `on_key` and `on_click` actually fire. Every
  * decision (key-word normalization, which keys have their browser default suppressed, and why the
@@ -912,7 +1386,17 @@ runToggleButton.addEventListener("click", () => {
   runToggleActionHandlers[action]();
 });
 resetButton.addEventListener("click", () => {
-  runController.reset();
+  stopCameraPreview();
+  boardImportRevision++;
+  boardImageSelectionActive = false;
+  boardImageDecodeActive = false;
+  boardImportController.cancel();
+  void cameraRobotDemoController
+    .cancel()
+    .then((cancelledCameraDemo) => {
+      if (!cancelledCameraDemo) runController.reset();
+    })
+    .catch(() => undefined);
 });
 speedSliderElement.addEventListener("input", () => {
   shell.state.setSpeedSliderValue(speedSliderElement.valueAsNumber);
@@ -968,6 +1452,7 @@ inputPromptDialog.addEventListener("cancel", (event) => {
  * assignment, no decision of its own (#316). */
 function renderRunToggleButton(runStatus: RunStatus): void {
   const viewModel = mapRunStatusToRunToggleViewModel(runStatus);
+  runToggleButton.disabled = cameraRobotDemoActive;
   runToggleButton.dataset.icon = viewModel.icon;
   runToggleButton.setAttribute("aria-label", viewModel.ariaLabel);
   runToggleLabelElement.textContent = viewModel.label;

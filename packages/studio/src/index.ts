@@ -378,6 +378,14 @@ export type {
   BoardImportStatus,
 } from "./board-import.js";
 export { createBoardImportController } from "./board-import.js";
+export type {
+  CameraFrameSource,
+  CameraRobotDemoController,
+  CameraRobotDemoOptions,
+  CameraRobotDemoState,
+  CameraRobotDemoStatus,
+} from "./camera-robot-demo.js";
+export { createCameraRobotDemoController } from "./camera-robot-demo.js";
 
 export type { RunController, RunControllerOptions } from "./run-controller.js";
 export {
@@ -676,3 +684,7 @@ export type {
 export { createRobotControlPanelController } from "./robot-control-panel.js";
 export { runRobotProgram, createRobotRunController } from "./robot-program.js";
 export type { RobotProgramOptions } from "./robot-program.js";
+export {
+  modelErrorMessage,
+  parseBoardRecognitionResponse,
+} from "./board-recognition-response.js";

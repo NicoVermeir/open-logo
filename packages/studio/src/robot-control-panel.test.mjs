@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createRobotControlPanelController } from "@openlogo/studio";
 
+const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
+
 function createRobot() {
   const calls = [];
   return {
@@ -70,7 +72,7 @@ test("manual pen and program share frozen calibration and reconnect requires con
     ["stop"],
     ["pen", false, settings],
   ]);
-  controller.disconnect();
+  await controller.disconnect();
   await controller.connect();
   assert.equal(controller.getView().penConfirmed, false);
   assert.equal(controller.getView().penState, "unknown");
@@ -79,6 +81,187 @@ test("manual pen and program share frozen calibration and reconnect requires con
 test("reports unsupported browsers", () => {
   const controller = createRobotControlPanelController(undefined);
   assert.equal(controller.getView().status, "unsupported");
+});
+
+test("disconnect invalidates a pending connection", async () => {
+  const fake = createRobot();
+  const replacement = createRobot();
+  let connectorCalls = 0;
+  let resolveConnection;
+  const controller = createRobotControlPanelController(() => {
+    connectorCalls++;
+    if (connectorCalls === 1)
+      return new Promise((resolve) => {
+        resolveConnection = resolve;
+      });
+    return Promise.resolve(replacement.robot);
+  });
+
+  const connection = controller.connect();
+  await controller.disconnect();
+  await controller.connect();
+  assert.equal(connectorCalls, 1);
+  resolveConnection(fake.robot);
+  await connection;
+  await controller.connect();
+
+  assert.equal(connectorCalls, 2);
+  assert.equal(controller.getView().status, "connected");
+  assert.equal(controller.getView().busy, false);
+  assert.deepEqual(fake.calls, [["disconnect"]]);
+});
+
+test("disconnect invalidates pending status readings", async () => {
+  const fake = createRobot();
+  let resolveBattery;
+  let resolveDistance;
+  fake.robot.battery = () =>
+    new Promise((resolve) => {
+      resolveBattery = resolve;
+    });
+  fake.robot.distance = () =>
+    new Promise((resolve) => {
+      resolveDistance = resolve;
+    });
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+
+  const refresh = controller.refreshStatus();
+  controller.disconnect();
+  resolveBattery(42);
+  resolveDistance(7);
+  await refresh;
+
+  assert.equal(controller.getView().status, "disconnected");
+  assert.equal(controller.getView().battery, undefined);
+  assert.equal(controller.getView().distance, undefined);
+});
+
+test("a rejected connection cannot overwrite a later disconnect", async () => {
+  let rejectConnection;
+  const controller = createRobotControlPanelController(
+    () => new Promise((_resolve, reject) => { rejectConnection = reject; }),
+  );
+  const connecting = controller.connect();
+  await controller.disconnect();
+  rejectConnection(new Error("stale connection failure"));
+  await connecting;
+  assert.equal(controller.getView().status, "disconnected");
+  assert.equal(controller.getView().statusMessage, "Robot disconnected.");
+  assert.equal(controller.getView().busy, false);
+});
+
+test("a rejected stale status reading cannot overwrite disconnect", async () => {
+  const fake = createRobot();
+  let rejectBattery;
+  fake.robot.battery = () =>
+    new Promise((_resolve, reject) => {
+      rejectBattery = reject;
+    });
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+
+  const refresh = controller.refreshStatus();
+  controller.disconnect();
+  rejectBattery(new Error("stale telemetry failure"));
+  await assert.rejects(refresh, /stale telemetry failure/);
+
+  assert.equal(controller.getView().status, "disconnected");
+  assert.equal(controller.getView().statusMessage, "Robot disconnected.");
+  assert.equal(controller.getView().busy, false);
+});
+
+test("disconnect stops, raises a confirmed pen, then disconnects", async () => {
+  const fake = createRobot();
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+  controller.confirmPenSettings();
+
+  await controller.disconnect();
+
+  assert.deepEqual(fake.calls, [
+    ["stop"],
+    [
+      "pen",
+      false,
+      {
+        downAngle: 90,
+        raisedAngle: 115,
+        measuredLiftMillimeters: NaN,
+        liftMillimeters: NaN,
+        settleMilliseconds: 200,
+      },
+    ],
+    ["disconnect"],
+  ]);
+});
+
+test("disconnect remains pending through cleanup and reports cleanup failure", async () => {
+  const fake = createRobot();
+  let rejectStop;
+  fake.robot.stop = () =>
+    new Promise((_resolve, reject) => {
+      rejectStop = reject;
+    });
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+  controller.confirmPenSettings();
+
+  const disconnect = controller.disconnect();
+  assert.equal(controller.getView().busy, true);
+  assert.notEqual(controller.getView().status, "disconnected");
+  rejectStop(new Error("Stop acknowledgement failed"));
+
+  await assert.rejects(disconnect, /Stop acknowledgement failed/);
+  assert.deepEqual(fake.calls, [
+    [
+      "pen",
+      false,
+      {
+        downAngle: 90,
+        raisedAngle: 115,
+        measuredLiftMillimeters: NaN,
+        liftMillimeters: NaN,
+        settleMilliseconds: 200,
+      },
+    ],
+    ["disconnect"],
+  ]);
+  assert.equal(controller.getView().status, "error");
+  assert.equal(controller.getView().busy, false);
+});
+
+test("disconnect retains ownership, permits emergency Stop, and blocks reconnect until cleanup settles", async () => {
+  const fake = createRobot();
+  const originalStop = fake.robot.stop;
+  let resolveCleanupStop;
+  let stopCount = 0;
+  fake.robot.stop = () => {
+    stopCount += 1;
+    if (stopCount > 1) return originalStop();
+    return new Promise((resolve) => {
+      resolveCleanupStop = resolve;
+    });
+  };
+  let connectionCount = 0;
+  const controller = createRobotControlPanelController(async () => {
+    connectionCount += 1;
+    return fake.robot;
+  });
+  await controller.connect();
+
+  const disconnect = controller.disconnect();
+  assert.equal(controller.getView().robotOwned, true);
+  await controller.connect();
+  assert.equal(connectionCount, 1);
+  await controller.stop();
+  assert.deepEqual(fake.calls, [["stop"]]);
+
+  resolveCleanupStop();
+  await disconnect;
+  assert.equal(controller.getView().robotOwned, false);
+  assert.equal(controller.getView().status, "disconnected");
+  assert.deepEqual(fake.calls, [["stop"], ["disconnect"]]);
 });
 
 test("program owns the connection until acknowledgement settles, with emergency cancellation", async () => {
@@ -107,6 +290,84 @@ test("program owns the connection until acknowledgement settles, with emergency 
   assert.deepEqual(fake.calls, [["stop"], ["stop"]]);
 });
 
+test("a stale program cannot publish or clear a newer program's cancellation", async () => {
+  const first = createRobot();
+  const second = createRobot();
+  const robots = [first.robot, second.robot];
+  first.robot.disconnect = () => {
+    first.robot.connected = false;
+    first.calls.push(["disconnect"]);
+  };
+  const controller = createRobotControlPanelController(async () =>
+    robots.shift(),
+  );
+  await controller.connect();
+
+  let rejectFirstProgram;
+  const firstRun = controller.runProgram(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectFirstProgram = reject;
+      }),
+  );
+  await controller.disconnect();
+  await controller.connect();
+
+  let secondCancelled;
+  let finishSecondProgram;
+  const secondRun = controller.runProgram(async (_robot, cancelled) => {
+    secondCancelled = cancelled;
+    await new Promise((resolve) => {
+      finishSecondProgram = resolve;
+    });
+  });
+  rejectFirstProgram(new Error("stale program failure"));
+  await assert.rejects(firstRun, /stale program failure/);
+
+  assert.equal(controller.getView().status, "connected");
+  assert.equal(secondCancelled(), false);
+  await controller.stop();
+  assert.equal(secondCancelled(), true);
+  finishSecondProgram();
+  await secondRun;
+});
+
+test("program rejects when mandatory safety cleanup fails", async () => {
+  const fake = createRobot();
+  fake.robot.stop = async () => {
+    throw new Error("Stop acknowledgement failed");
+  };
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+
+  await assert.rejects(
+    controller.runProgram(async () => {}),
+    /Stop acknowledgement failed/,
+  );
+  assert.equal(controller.getView().busy, false);
+});
+
+test("a rejected program preserves an owned robot connection", async () => {
+  const fake = createRobot();
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+
+  await assert.rejects(
+    controller.runProgram(async () => {
+      throw new Error("Robot runs do not support clear_screen.");
+    }),
+    /Robot runs do not support clear_screen/,
+  );
+
+  assert.equal(controller.getView().status, "connected");
+  assert.equal(controller.getView().robotOwned, true);
+  assert.equal(controller.getView().busy, false);
+  assert.equal(
+    controller.getView().statusMessage,
+    "Robot runs do not support clear_screen.",
+  );
+});
+
 test("virtual execution locks manual and program actions", async () => {
   const fake = createRobot();
   const controller = createRobotControlPanelController(
@@ -116,9 +377,27 @@ test("virtual execution locks manual and program actions", async () => {
   await controller.connect();
   await controller.move("forward");
   await controller.refreshStatus();
+  controller.confirmPenSettings();
+  await controller.testPenAngle("downAngle");
+  assert.equal(controller.getView().penConfirmed, false);
   await controller.runProgram(async () =>
     assert.fail("virtual execution active"),
   );
+  assert.deepEqual(fake.calls, []);
+});
+
+test("a disconnected program reports non-Error failure without further hardware commands", async () => {
+  const fake = createRobot();
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+  const failure = { reason: "lost connection" };
+  await assert.rejects(controller.runProgram(async () => {
+    fake.robot.connected = false;
+    throw failure;
+  }), (error) => error === failure);
+  assert.equal(controller.getView().status, "error");
+  assert.equal(controller.getView().statusMessage, "Robot run failed.");
+  assert.equal(controller.getView().busy, false);
   assert.deepEqual(fake.calls, []);
 });
 
@@ -149,10 +428,10 @@ test("connects, drives with current settings, and refreshes status", async () =>
     ["stop"],
   ]);
   assert.ok(views.length > 5);
-  controller.disconnect();
+  await controller.disconnect();
   assert.equal(controller.getView().status, "disconnected");
   unsubscribe();
-  controller.dispose();
+  await controller.dispose();
 });
 
 test("surfaces connection errors", async () => {
@@ -184,6 +463,7 @@ test("surfaces non-Error connection and command failures", async () => {
   await commandController.connect();
   await commandController.move("forward");
   assert.equal(commandController.getView().status, "error");
+  assert.equal(commandController.getView().robotOwned, true);
   assert.equal(
     commandController.getView().statusMessage,
     "Robot command failed.",
@@ -194,6 +474,7 @@ test("surfaces non-Error connection and command failures", async () => {
   };
   await commandController.move("backward");
   assert.equal(commandController.getView().statusMessage, "Motor unavailable.");
+  assert.equal(commandController.getView().robotOwned, true);
 });
 
 test("emergency stop runs during a busy status refresh", async () => {
@@ -224,8 +505,8 @@ test("ignores unavailable, concurrent, and disposed actions", async () => {
   await unsupported.connect();
   await unsupported.move("forward");
   await unsupported.stop();
-  unsupported.disconnect();
-  unsupported.dispose();
+  await unsupported.disconnect();
+  await unsupported.dispose();
 
   let resolveConnection;
   const fake = createRobot();
@@ -250,7 +531,97 @@ test("ignores unavailable, concurrent, and disposed actions", async () => {
   resolveForward();
   await movement;
 
-  controller.dispose();
+  await controller.dispose();
   await controller.connect();
+  assert.deepEqual(fake.calls, [["stop"], ["disconnect"]]);
+});
+
+test("dispose disconnects and reports safety cleanup rejection", async () => {
+  const fake = createRobot();
+  fake.robot.stop = async () => {
+    throw new Error("cleanup failed");
+  };
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+
+  await assert.rejects(controller.dispose(), /cleanup failed/);
+
   assert.deepEqual(fake.calls, [["disconnect"]]);
+});
+
+test("disconnect handles an already disconnected robot", async () => {
+  const fake = createRobot();
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+  fake.robot.connected = false;
+
+  await controller.disconnect();
+
+  assert.deepEqual(fake.calls, [["disconnect"]]);
+  assert.equal(controller.getView().status, "disconnected");
+});
+
+test("cleanup failure releases ownership when disconnect succeeds", async () => {
+  const fake = createRobot();
+  fake.robot.stop = async () => { throw "stop failed"; };
+  fake.robot.disconnect = () => { fake.robot.connected = false; };
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+  await assert.rejects(controller.disconnect(), (error) => error === "stop failed");
+  assert.equal(controller.getView().status, "error");
+  assert.equal(controller.getView().statusMessage, "Robot safety cleanup failed.");
+  assert.equal(controller.getView().deviceName, "");
+  assert.equal(controller.getView().robotOwned, false);
+  await controller.move("forward");
+  assert.deepEqual(fake.calls, []);
+});
+
+test("dispose cancels the program and raises its calibrated pen before disconnect", async () => {
+  const fake = createRobot();
+  fake.robot.disconnect = () => {
+    fake.robot.connected = false;
+    fake.calls.push(["disconnect"]);
+  };
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+  controller.confirmPenSettings();
+  const settings = controller.getView().penSettings;
+  let finish;
+  let isCancelled;
+  const running = controller.runProgram((_robot, cancelled) => {
+    isCancelled = cancelled;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  await controller.dispose();
+  assert.equal(isCancelled(), true);
+  assert.deepEqual(fake.calls, [["stop"], ["pen", false, settings], ["disconnect"]]);
+  finish();
+  await running;
+  assert.equal(fake.calls.length, 3);
+});
+
+test("disconnect attempts every safety action and aggregates cleanup failures", async () => {
+  const fake = createRobot();
+  fake.robot.stop = async () => {
+    throw new Error("stop failed");
+  };
+  fake.robot.setPenDown = async () => {
+    throw new Error("pen failed");
+  };
+  fake.robot.disconnect = () => {
+    throw new Error("disconnect failed");
+  };
+  const controller = createRobotControlPanelController(async () => fake.robot);
+  await controller.connect();
+  controller.confirmPenSettings();
+
+  await assert.rejects(controller.disconnect(), (error) => {
+    assert.ok(error instanceof AggregateError);
+    assert.deepEqual(
+      error.errors.map((failure) => failure.message),
+      ["stop failed", "pen failed", "disconnect failed"],
+    );
+    return true;
+  });
+  assert.equal(controller.getView().status, "error");
 });

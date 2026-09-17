@@ -23,6 +23,12 @@ export interface BoardImportController {
 
 export interface BoardImportOptions extends BoardReaderOptions {
   readonly onStateChange?: (state: BoardImportState) => void;
+  readonly createCancellationController?: () => BoardImportCancellationController;
+}
+
+interface BoardImportCancellationController {
+  readonly signal: { readonly aborted: boolean };
+  abort(): void;
 }
 
 export function createBoardImportController(
@@ -35,7 +41,7 @@ export function createBoardImportController(
     result: null,
     error: null,
   };
-  let cancellation: { aborted: boolean } | null = null;
+  let cancellation: BoardImportCancellationController | null = null;
 
   const publish = (nextState: BoardImportState): void => {
     state = nextState;
@@ -45,14 +51,18 @@ export function createBoardImportController(
   return {
     getState: () => state,
     async importImage(image) {
-      cancellation = { aborted: false };
+      cancellation?.abort();
+      const currentCancellation =
+        options.createCancellationController?.() ??
+        createBoardImportCancellationController();
+      cancellation = currentCancellation;
       publish({ status: "recognizing", result: null, error: null });
       try {
         const result = await readBoard(image, provider, {
           ...options,
-          signal: cancellation,
+          signal: currentCancellation.signal,
         });
-        if (cancellation.aborted) {
+        if (currentCancellation.signal.aborted) {
           return null;
         }
         const recognitionFailure = result.issues.find(
@@ -75,28 +85,40 @@ export function createBoardImportController(
         publish({ status: "succeeded", result, error: null });
         return result;
       } catch (error) {
-        if (cancellation.aborted) {
-          publish({ status: "idle", result: null, error: null });
+        if (currentCancellation.signal.aborted) {
+          if (cancellation === currentCancellation) {
+            publish({ status: "idle", result: null, error: null });
+          }
           return null;
         }
         const message =
           error instanceof Error ? error.message : "Board import failed.";
         publish({ status: "failed", result: null, error: message });
-        return null;
       } finally {
-        cancellation = null;
+        if (cancellation === currentCancellation) cancellation = null;
       }
+      return null;
     },
     cancel() {
-      if (cancellation) {
-        cancellation.aborted = true;
-      }
+      cancellation?.abort();
+      cancellation = null;
+      publish({ status: "idle", result: null, error: null });
     },
   };
 }
 
 function selectionAtEnd(source: string) {
   const lines = source.split("\n");
-  const position = [lines.length, (lines.at(-1)?.length ?? 0) + 1] as const;
+  const position = [lines.length, source.length - source.lastIndexOf("\n")] as const;
   return { anchor: position, head: position };
+}
+
+function createBoardImportCancellationController(): BoardImportCancellationController {
+  const signal = { aborted: false };
+  return {
+    signal,
+    abort() {
+      signal.aborted = true;
+    },
+  };
 }

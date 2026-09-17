@@ -148,6 +148,74 @@
           hidden
         />
         <p id="board-import-status" role="status" aria-live="polite"></p>
+        <div class="camera-device-control">
+          <label for="camera-device-select">Webcam</label>
+          <select id="camera-device-select">
+            <option value="">Automatic</option>
+          </select>
+          <button
+            id="camera-devices-refresh-button"
+            type="button"
+            aria-label="Refresh webcams"
+            title="Allow camera access and refresh webcams"
+          >
+            <span class="control-icon" aria-hidden="true"></span>
+          </button>
+        </div>
+        <p
+          id="camera-device-status"
+          role="status"
+          aria-live="polite"
+          aria-label="Webcam status"
+        ></p>
+        <button
+          id="camera-preview-button"
+          type="button"
+          class="icon-button"
+          data-icon="camera"
+          aria-label="Start camera preview"
+          aria-pressed="false"
+          aria-controls="camera-preview"
+          title="Start camera preview"
+        >
+          <span class="control-icon" aria-hidden="true"></span>
+          <span id="camera-preview-label" class="control-label">Preview</span>
+        </button>
+        <p
+          id="camera-preview-status"
+          role="status"
+          aria-live="polite"
+          aria-label="Camera preview status"
+        ></p>
+        <video
+          id="camera-preview"
+          aria-label="Live webcam preview"
+          muted
+          playsinline
+          hidden
+        ></video>
+        <button
+          id="camera-robot-demo-button"
+          type="button"
+          class="icon-button"
+          data-icon="camera"
+          aria-label="Capture board and run on turtlebot"
+          aria-describedby="camera-robot-demo-status"
+          title="Capture board and run on turtlebot"
+          disabled
+        >
+          <span class="control-icon" aria-hidden="true"></span>
+          <span class="control-label">Camera to turtlebot</span>
+        </button>
+        <p
+          id="camera-robot-demo-status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          aria-label="Camera to turtlebot status"
+        >
+          Camera workflow is loading...
+        </p>
         <span class="speed-control">
           <label for="speed-slider">Turtle speed</label>
           <input

@@ -1,92 +1,126 @@
-import { defineConfig, loadEnv, type Plugin } from "vite";
+import {
+  defineConfig,
+  loadEnv,
+  type Plugin,
+  type PreviewServer,
+  type ViteDevServer,
+} from "vite";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { modelErrorMessage } from "./src/board-recognition-response.js";
 
 const executeFile = promisify(execFile);
 
 function boardRecognitionProxy(env: Record<string, string>): Plugin {
-  return {
-    name: "openlogo-board-recognition-proxy",
-    configureServer(server) {
-      server.middlewares.use(
-        "/api/recognize-board",
-        async (request, response) => {
-          if (request.method !== "POST") {
-            response.statusCode = 405;
-            response.end("Method not allowed");
-            return;
-          }
+  const installMiddleware = (server: ViteDevServer | PreviewServer): void => {
+    server.middlewares.use(
+      "/api/recognize-board",
+      async (request, response) => {
+        if (request.method !== "POST") {
+          response.statusCode = 405;
+          response.end("Method not allowed");
+          return;
+        }
 
-          const endpoint = env.OPENLOGO_LLM_ENDPOINT;
-          if (!endpoint) {
-            response.statusCode = 503;
-            response.setHeader("content-type", "application/json");
-            response.end(
-              JSON.stringify({ error: "LLM endpoint is not configured." }),
-            );
-            return;
-          }
+        const endpoint = env.OPENLOGO_LLM_ENDPOINT;
+        if (!endpoint) {
+          response.statusCode = 503;
+          response.setHeader("content-type", "application/json");
+          response.end(
+            JSON.stringify({ error: "LLM endpoint is not configured." }),
+          );
+          return;
+        }
 
-          try {
-            const requestBody = await readJsonBody(request);
-            const accessToken = await getAzureAccessToken(env);
-            const modelResponse = await fetch(endpoint, {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                Authorization: `Bearer ${accessToken}`,
-              },
-              body: JSON.stringify(createVisionRequest(requestBody, env)),
-            });
-            const responseText = await modelResponse.text();
-            if (!modelResponse.ok) {
-              response.statusCode = modelResponse.status;
-              response.setHeader("content-type", "application/json");
-              response.end(responseText);
-              return;
-            }
-            response.statusCode = 200;
-            response.setHeader("content-type", "application/json");
-            response.end(
-              JSON.stringify(extractModelJson(JSON.parse(responseText))),
-            );
-          } catch (error) {
-            response.statusCode = 502;
+        const cancellation = new AbortController();
+        response.once("close", () => {
+          if (!response.writableEnded) cancellation.abort();
+        });
+        try {
+          const requestBody = await readJsonBody(request);
+          const accessToken = await getAzureAccessToken(env);
+          const modelResponse = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify(createVisionRequest(requestBody, env)),
+            signal: cancellation.signal,
+          });
+          const responseText = await modelResponse.text();
+          if (!modelResponse.ok) {
+            response.statusCode = modelResponse.status;
             response.setHeader("content-type", "application/json");
             response.end(
               JSON.stringify({
-                error:
-                  error instanceof Error
-                    ? error.message
-                    : "LLM request failed.",
+                error: modelErrorMessage(responseText, modelResponse.status),
               }),
             );
+            return;
           }
-        },
-      );
-    },
+          response.statusCode = 200;
+          response.setHeader("content-type", "application/json");
+          response.end(
+            JSON.stringify(extractModelJson(JSON.parse(responseText))),
+          );
+        } catch (error) {
+          if (cancellation.signal.aborted || response.destroyed) return;
+          response.statusCode = 502;
+          response.setHeader("content-type", "application/json");
+          response.end(
+            JSON.stringify({
+              error:
+                error instanceof Error ? error.message : "LLM request failed.",
+            }),
+          );
+        }
+      },
+    );
+  };
+  return {
+    name: "openlogo-board-recognition-proxy",
+    configureServer: installMiddleware,
+    configurePreviewServer: installMiddleware,
   };
 }
 
 async function getAzureAccessToken(
   env: Record<string, string>,
 ): Promise<string> {
+  const scope = validatedAzureCliArgument(
+    env.OPENLOGO_LLM_SCOPE ?? "https://ai.azure.com/.default",
+    "OPENLOGO_LLM_SCOPE",
+  );
   const args = [
     "account",
     "get-access-token",
     "--scope",
-    env.OPENLOGO_LLM_SCOPE ?? "https://ai.azure.com/.default",
+    scope,
     "--query",
     "accessToken",
     "-o",
     "tsv",
   ];
   if (env.OPENLOGO_AZURE_TENANT_ID) {
-    args.push("--tenant", env.OPENLOGO_AZURE_TENANT_ID);
+    args.push(
+      "--tenant",
+      validatedAzureCliArgument(
+        env.OPENLOGO_AZURE_TENANT_ID,
+        "OPENLOGO_AZURE_TENANT_ID",
+      ),
+    );
   }
   try {
-    // .cmd shims (Windows) require shell interpretation; args here are fixed, not attacker-controlled.
-    const { stdout } = await executeFile("az", args, { shell: true });
+    const executable =
+      process.platform === "win32" ? process.env.ComSpec : "az";
+    if (!executable)
+      throw new Error("Windows command interpreter was not found.");
+    const executableArgs =
+      process.platform === "win32"
+        ? ["/d", "/s", "/c", "az.cmd", ...args]
+        : args;
+    const { stdout } = await executeFile(executable, executableArgs);
     const token = stdout.trim();
     if (!token) {
       throw new Error("Azure CLI returned an empty access token.");
@@ -98,6 +132,13 @@ async function getAzureAccessToken(
       `Could not acquire an Entra ID token. Run 'az login'. ${detail}`,
     );
   }
+}
+
+function validatedAzureCliArgument(value: string, name: string): string {
+  if (!/^[a-zA-Z0-9./:_-]+$/.test(value)) {
+    throw new Error(`${name} contains unsupported characters.`);
+  }
+  return value;
 }
 
 function readJsonBody(

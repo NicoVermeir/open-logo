@@ -66,8 +66,8 @@ export interface MBot2ManualRobot {
   backward(speed: number, durationSeconds: number): Promise<void>;
   turnLeft(speed: number, durationSeconds: number): Promise<void>;
   turnRight(speed: number, durationSeconds: number): Promise<void>;
-  moveCentimeters(distance: number): Promise<void>;
-  turnDegrees(angle: number): Promise<void>;
+  moveCentimeters(distance: number, cancelled?: () => boolean): Promise<void>;
+  turnDegrees(angle: number, cancelled?: () => boolean): Promise<void>;
   setPenAngle(angle: number, settleMilliseconds: number): Promise<void>;
   setPenDown(down: boolean, settings: RobotPenSettings): Promise<void>;
   stop(): Promise<void>;
@@ -111,14 +111,20 @@ export function createMBot2ManualRobot(
     });
     if (!transport.connected) throw new Error("The robot disconnected.");
   };
-  const move = (
+  const move = async (
     command: "forward" | "backward" | "turn_left" | "turn_right",
     speed: number,
     durationSeconds: number,
-  ): Promise<void> =>
-    transport.run(
-      `mbot2.${command}(${clampInteger(speed, MBOT2_MINIMUM_SPEED, MBOT2_MAXIMUM_SPEED)},${formatDuration(durationSeconds)})`,
+  ): Promise<void> => {
+    const response = await transport.evaluate(
+      `(mbot2.${command}(${clampInteger(speed, MBOT2_MINIMUM_SPEED, MBOT2_MAXIMUM_SPEED)},${formatDuration(durationSeconds)}),1)[1]`,
+      4_000,
     );
+    if (response !== 1)
+      throw new Error(
+        "Robot movement was not acknowledged. Check the robot before trying again.",
+      );
+  };
 
   return {
     deviceName: transport.deviceName,
@@ -133,13 +139,20 @@ export function createMBot2ManualRobot(
       move("turn_left", speed, durationSeconds),
     turnRight: (speed, durationSeconds) =>
       move("turn_right", speed, durationSeconds),
-    moveCentimeters: (distance) =>
-      acknowledgedMotion(transport, "straight", distance, 1_000),
-    turnDegrees: (angle) => acknowledgedMotion(transport, "turn", angle, 5_000),
+    moveCentimeters: (distance, cancelled) =>
+      acknowledgedMotion(transport, "straight", distance, 1_000, cancelled),
+    turnDegrees: (angle, cancelled) =>
+      acknowledgedMotion(transport, "turn", angle, 5_000, cancelled),
     setPenAngle,
     setPenDown: async (down, settings) =>
       setPenAngle(robotPenAngle(down, settings), settings.settleMilliseconds),
-    stop: () => transport.run("mbot2.EM_stop()"),
+    stop: async () => {
+      const response = await transport.evaluate("(mbot2.EM_stop(),1)[1]");
+      if (response !== 1)
+        throw new Error(
+          "Emergency Stop was not acknowledged. Keep clear of the robot and disconnect it manually.",
+        );
+    },
     battery: () => evaluateNumber(transport, "cyberpi.get_battery()"),
     distance: () => evaluateNumber(transport, "cyberpi.ultrasonic2.get(1)"),
     disconnect: () => transport.disconnect(),
@@ -151,19 +164,24 @@ async function acknowledgedMotion(
   command: "straight" | "turn",
   amount: number,
   maximum: number,
+  cancelled: () => boolean = () => false,
 ): Promise<void> {
   if (!Number.isFinite(amount) || Math.abs(amount) > maximum) {
-    throw new Error("Robot movement exceeds the bounded segment size.");
+    throw new Error("Robot movement exceeds the bounded motion limit.");
   }
+  if (cancelled()) throw new Error("Robot run stopped.");
+  if (amount === 0) return;
   const response = await transport.evaluate(
     `(mbot2.${command}(${amount},speed=30),1)[1]`,
-    3_000 + Math.ceil(Math.abs(amount) / (command === "straight" ? 2 : 10)) * 1_000,
+    3_000 +
+      Math.ceil(Math.abs(amount) / (command === "straight" ? 2 : 10)) * 1_000,
   );
   if (response !== 1) {
     throw new Error(
       "Robot movement was not acknowledged. Check the robot before running again.",
     );
   }
+  if (cancelled()) throw new Error("Robot run stopped.");
 }
 
 function clampInteger(value: number, minimum: number, maximum: number): number {

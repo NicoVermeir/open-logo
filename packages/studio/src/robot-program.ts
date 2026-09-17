@@ -233,8 +233,8 @@ export async function runRobotProgram(
           if (motion.amount === 0) continue;
           checkActive();
           if (motion.kind === "move")
-            await robot.moveCentimeters(motion.amount / 10);
-          else await robot.turnDegrees(motion.amount);
+            await robot.moveCentimeters(motion.amount / 10, cancelled);
+          else await robot.turnDegrees(motion.amount, cancelled);
           checkActive();
         }
         if (programPenDown) {
@@ -252,7 +252,7 @@ export async function runRobotProgram(
       const drawing =
         following?.kind === "draw-segment" ? following : undefined;
       checkActive();
-      await robot.moveCentimeters(amount / 10);
+      await robot.moveCentimeters(amount / 10, cancelled);
       checkActive();
       apply(event);
       if (drawing !== undefined) apply(drawing);
@@ -371,10 +371,32 @@ export function createRobotRunController(
   normal: RunController,
   controls: RobotControlPanelController,
   repaint: () => void,
-): RunController & { runOnRobot(): Promise<void> } {
+): RunController & {
+  resetRobot(): Promise<void>;
+  runOnRobot(): Promise<boolean>;
+} {
   const { state } = normal;
   let runningRobot = false;
   let revision = 0;
+  const resetRobot = async (): Promise<void> => {
+    const resetRevision = ++revision;
+    if (!runningRobot) {
+      normal.reset();
+      return;
+    }
+    try {
+      await controls.stop();
+      if (resetRevision === revision) normal.reset();
+    } catch (error) {
+      if (resetRevision === revision)
+        state.setNotice({
+          level: "warning",
+          message:
+            error instanceof Error ? error.message : "Robot stop failed.",
+        });
+      throw error;
+    }
+  };
   return {
     ...normal,
     run() {
@@ -385,16 +407,32 @@ export function createRobotRunController(
     },
     stop() {
       if (runningRobot) {
-        void controls.stop();
-        state.setRunStatus("stopped");
-        state.setCurrentInstructionSourceSpan(null);
+        const stoppingRevision = revision;
+        void controls
+          .stop()
+          .then(() => {
+            if (
+              stoppingRevision === revision &&
+              state.getState().runStatus === "running"
+            ) {
+              state.setRunStatus("stopped");
+              state.setCurrentInstructionSourceSpan(null);
+            }
+          })
+          .catch((error: unknown) => {
+            if (stoppingRevision === revision)
+              state.setNotice({
+                level: "warning",
+                message:
+                  error instanceof Error ? error.message : "Robot stop failed.",
+              });
+          });
       } else normal.stop();
     },
     reset() {
-      revision++;
-      if (runningRobot) void controls.stop();
-      normal.reset();
+      void resetRobot().catch(() => undefined);
     },
+    resetRobot,
     deliverKey(key) {
       return runningRobot ? false : normal.deliverKey(key);
     },
@@ -402,45 +440,61 @@ export function createRobotRunController(
       return runningRobot ? false : normal.deliverClick();
     },
     async runOnRobot() {
-      if (state.getState().runStatus === "running" || runningRobot) return;
-      await controls.runProgram(async (robot, cancelled, penSettings) => {
-        normal.reset();
-        runningRobot = true;
-        const currentRevision = ++revision;
-        const source = state.getState().source;
-        state.setNotice(null);
-        state.setRunStatus("running");
-        let completed = false;
-        try {
-          await runRobotProgram(robot, {
-            state,
-            repaint,
-            cancelled,
-            ...(penSettings === undefined ? {} : { penSettings }),
+      if (state.getState().runStatus === "running" || runningRobot)
+        return false;
+      let completed = false;
+      let currentRevision: number | undefined;
+      try {
+        await controls.runProgram(async (robot, cancelled, penSettings) => {
+          normal.reset();
+          runningRobot = true;
+          currentRevision = ++revision;
+          const source = state.getState().source;
+          state.setNotice(null);
+          state.setRunStatus("running");
+          try {
+            await runRobotProgram(robot, {
+              state,
+              repaint,
+              cancelled,
+              ...(penSettings === undefined ? {} : { penSettings }),
+            });
+            completed = !cancelled();
+          } catch (error) {
+            if (!cancelled() && currentRevision === revision) {
+              state.setNotice({
+                level: "warning",
+                message:
+                  error instanceof Error ? error.message : "Robot run failed.",
+              });
+              throw error;
+            }
+          } finally {
+            runningRobot = false;
+            if (currentRevision === revision) {
+              state.setLastRunResult({
+                source,
+                output: state.getState().output,
+                diagnostics: state.getState().diagnostics,
+              });
+              state.setCurrentInstructionSourceSpan(null);
+            }
+          }
+        });
+        if (currentRevision === revision)
+          state.setRunStatus(completed ? "done" : "stopped");
+      } catch (error) {
+        completed = false;
+        if (currentRevision === revision) {
+          state.setRunStatus("stopped");
+          state.setNotice({
+            level: "warning",
+            message:
+              error instanceof Error ? error.message : "Robot run failed.",
           });
-          completed = true;
-        } catch (error) {
-          if (!cancelled() && currentRevision === revision) {
-            state.setNotice({
-              level: "warning",
-              message:
-                error instanceof Error ? error.message : "Robot run failed.",
-            });
-            throw error;
-          }
-        } finally {
-          runningRobot = false;
-          if (currentRevision === revision) {
-            state.setLastRunResult({
-              source,
-              output: state.getState().output,
-              diagnostics: state.getState().diagnostics,
-            });
-            state.setCurrentInstructionSourceSpan(null);
-            state.setRunStatus(completed && !cancelled() ? "done" : "stopped");
-          }
         }
-      });
+      }
+      return completed;
     },
   };
 }

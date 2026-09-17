@@ -118,7 +118,10 @@ test("index.html's focusable elements appear in exactly REPL_FOCUS_ORDER's DOM o
     "lesson-pane": "lesson-pane",
     editor: "editor-host",
     "run-toggle-button": "run-toggle-button",
+    "run-on-robot-button": "run-on-robot-button",
     "reset-button": "reset-button",
+    "board-import-button": "board-import-button",
+    "camera-robot-demo-button": "camera-robot-demo-button",
     "speed-slider": "speed-slider",
     "run-log": "run-log",
     canvas: "turtle-canvas",
@@ -217,9 +220,44 @@ test("index.html provides bounded, accessible mBot2 manual controls below the ca
 });
 
 test("web/main.ts keeps emergency stop available while robot controls are busy", () => {
-  assert.match(mainTs, /robotElements\.stop\.disabled = !connected/);
+  assert.match(mainTs, /robotElements\.stop\.disabled = !robotOwned/);
   assert.doesNotMatch(mainTs, /robotElements\.stop\.disabled = view\.busy/);
-  assert.match(mainTs, /robotControls\.stop\(\)/);
+  assert.match(
+    mainTs,
+    /robotElements\.stop\.addEventListener\("click", \(\) => \{[\s\S]*?\.cancel\(\)[\s\S]*?cancelledCameraDemo \? undefined : robotControls\.stop\(\)/,
+    "emergency Stop must cancel pending camera work before stopping the robot",
+  );
+  assert.match(
+    mainTs,
+    /robotElements\.refresh\.addEventListener\([\s\S]*?robotControls\.refreshStatus\(\)\.catch\(\(\) => undefined\)/,
+    "telemetry failures are published by the controller and must not become unhandled rejections",
+  );
+});
+
+test("web/main.ts locks conflicting controls for the complete camera-to-robot workflow", () => {
+  assert.match(
+    mainTs,
+    /const executionLocked =\s*state\.getState\(\)\.runStatus === "running" \|\| cameraRobotDemoActive/,
+  );
+  assert.match(
+    mainTs,
+    /function renderRunToggleButton[\s\S]*?runToggleButton\.disabled = cameraRobotDemoActive/,
+  );
+  assert.match(
+    mainTs,
+    /function renderCameraRobotDemoState[\s\S]*?cameraRobotDemoActive = \["capturing", "recognizing", "running"\]\.includes\([\s\S]*?renderRobotControls\(robotControls\.getView\(\)\);\s*renderRunToggleButton\(state\.getState\(\)\.runStatus\)/,
+    "every active or terminal camera state must repaint the shared control lock",
+  );
+  assert.doesNotMatch(
+    mainTs,
+    /robotElements\.stop\.disabled = [^\n]*executionLocked/,
+    "emergency Stop must remain available while the camera workflow owns execution",
+  );
+  assert.doesNotMatch(
+    mainTs,
+    /resetButton\.disabled\s*=/,
+    "Reset must remain available as the authoritative cancellation path",
+  );
 });
 
 test("#952: index.html renders the canvas activation button, described help text, and the aria-describedby that links them — all from canvas-interaction.ts's constants", () => {
@@ -320,6 +358,23 @@ test("index.html's Reset button has an icon and an accessible name", () => {
   assert.ok(resetTag, "expected a #reset-button element");
   assert.match(resetTag, /aria-label="Reset"/);
   assert.match(resetTag, /data-icon="reset"/);
+});
+
+test("index.html provides the one-click camera-to-turtlebot demo action and live status", () => {
+  const demoButton = openingTags.find((tag) =>
+    tag.includes('id="camera-robot-demo-button"'),
+  );
+  assert.ok(demoButton);
+  assert.match(demoButton, /type="button"/u);
+  assert.match(demoButton, /data-icon="camera"/u);
+  assert.match(demoButton, /aria-label="Capture board and run on turtlebot"/u);
+  assert.match(demoButton, /\bdisabled\b/u);
+  const demoStatus = openingTags.find((tag) =>
+    tag.includes('id="camera-robot-demo-status"'),
+  );
+  assert.ok(demoStatus);
+  assert.match(demoStatus, /role="status"/u);
+  assert.match(demoStatus, /aria-live="polite"/u);
 });
 
 test("index.html declares both always-live aria-live regions createA11yAnnouncer's announcements render into", () => {
@@ -514,9 +569,22 @@ test("web/main.ts renders the toggle's icon/aria-label/label from the view model
   );
 });
 
-test("web/main.ts still calls runController.reset() directly from the Reset button (unchanged run-controller semantics, #316)", () => {
+test("web/main.ts cancels imports and the camera workflow before resetting from Reset", () => {
   assert.match(mainTs, /resetButton\.addEventListener\(\s*"click"/);
-  assert.match(mainTs, /runController\.reset\(\)/);
+  assert.match(mainTs, /boardImportRevision\+\+/);
+  assert.match(mainTs, /boardImportController\.cancel\(\)/);
+  assert.match(mainTs, /cameraRobotDemoController\s*\.cancel\(\)/);
+  assert.match(
+    mainTs,
+    /\.cancel\(\)[\s\S]*?if \(!cancelledCameraDemo\) runController\.reset\(\)/,
+  );
+});
+
+test("web/main.ts cancels the camera workflow before disposing robot controls on unload", () => {
+  assert.match(
+    mainTs,
+    /beforeunload[\s\S]*?cameraRobotDemoController[\s\S]*?\.cancel\(\)[\s\S]*?\.then\(\(\) => robotControls\.dispose\(\)\)/,
+  );
 });
 
 test("#952: web/main.ts mounts the canvas interaction and makes no input decision of its own — web/** is neither type-checked nor linted, so all logic stays in src/canvas-interaction.ts", () => {

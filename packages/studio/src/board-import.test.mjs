@@ -84,3 +84,103 @@ test("cancels an in-flight import without changing the editor", async () => {
   assert.deepEqual(editor.calls, []);
   assert.equal(controller.getState().status, "idle");
 });
+
+test("a newer import owns cancellation and ignores the older result", async () => {
+  const editor = editorSpy();
+  const recognitions = [];
+  const controller = createBoardImportController(editor, {
+    name: "ordered",
+    recognize(_image, signal) {
+      return new Promise((resolve) => recognitions.push({ resolve, signal }));
+    },
+  });
+
+  const firstImport = controller.importImage(image);
+  const secondImport = controller.importImage(image);
+  recognitions[0].resolve([block]);
+  assert.equal(await firstImport, null);
+  assert.equal(recognitions[0].signal.aborted, true);
+
+  recognitions[1].resolve([{ ...block, arguments: ["20"] }]);
+  assert.equal((await secondImport).source, "forward 20");
+  assert.deepEqual(
+    editor.calls.map((call) => call.source),
+    ["forward 20"],
+  );
+  assert.equal(controller.getState().status, "succeeded");
+});
+
+test("ignores a result cancelled after recognition has validated it", async () => {
+  const editor = editorSpy();
+  const controller = createBoardImportController(editor, {
+    get name() {
+      controller.cancel();
+      return "cancel-at-completion";
+    },
+    async recognize() {
+      return [block];
+    },
+  });
+  assert.equal(await controller.importImage(image), null);
+  assert.deepEqual(editor.calls, []);
+  assert.equal(controller.getState().status, "idle");
+});
+
+test("an externally aborted import clears its own recognizing state", async () => {
+  const editor = editorSpy();
+  const signal = { aborted: false };
+  const states = [];
+  const controller = createBoardImportController(editor, {
+    name: "external-abort",
+    async recognize() {
+      signal.aborted = true;
+      throw new Error("cancelled");
+    },
+  }, {
+    createCancellationController: () => ({ signal, abort() { signal.aborted = true; } }),
+    onStateChange: (state) => states.push(state.status),
+  });
+  assert.equal(await controller.importImage(image), null);
+  assert.deepEqual(editor.calls, []);
+  assert.deepEqual(states, ["recognizing", "idle"]);
+});
+
+test("empty recognition leaves the editor unchanged and publishes success", async () => {
+  const editor = editorSpy();
+  const controller = createBoardImportController(editor, createStaticBoardRecognitionProvider([]));
+  assert.equal((await controller.importImage(image)).source, "");
+  assert.deepEqual(editor.calls, []);
+  assert.equal(controller.getState().status, "succeeded");
+});
+
+test("reports invalid input and non-Error editor failures", async () => {
+  const controller = createBoardImportController({
+    setTextAndSelection() { throw "editor unavailable"; },
+  }, createStaticBoardRecognitionProvider([block]));
+  assert.equal(await controller.importImage({ ...image, width: 0 }), null);
+  assert.equal(controller.getState().status, "failed");
+  assert.match(controller.getState().error, /RGBA bytes/);
+  assert.equal(await controller.importImage(image), null);
+  assert.equal(controller.getState().error, "Board import failed.");
+});
+
+test("a throwing failure observer releases the import for a multiline retry", async () => {
+  const editor = editorSpy();
+  const failure = new Error("observer unavailable");
+  const controller = createBoardImportController(editor,
+    createStaticBoardRecognitionProvider([
+      block,
+      { ...block, id: "forward-2", arguments: ["20"], bounds: { ...block.bounds, y: 20 } },
+    ]), {
+      onStateChange(state) {
+        if (state.status === "failed") throw failure;
+      },
+    });
+  await assert.rejects(controller.importImage({ ...image, width: 0 }), (error) => error === failure);
+  assert.equal((await controller.importImage(image)).source, "forward 10\nforward 20");
+  assert.deepEqual(editor.calls, [{
+    source: "forward 10\nforward 20",
+    selection: { anchor: [2, 11], head: [2, 11] },
+  }]);
+  assert.equal(controller.getState().status, "succeeded");
+});

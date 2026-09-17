@@ -154,6 +154,99 @@ main section {
   grid-area: controls;
 }
 
+.camera-device-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 2.25rem;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 28rem;
+  margin-block: 0.75rem;
+}
+
+.camera-device-control label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+#camera-device-select {
+  min-width: 0;
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.35rem;
+  border: 1px solid var(--ol-border);
+  border-radius: 6px;
+  background: var(--ol-surface);
+  color: var(--ol-navy);
+  font: inherit;
+  text-overflow: ellipsis;
+}
+
+#camera-devices-refresh-button {
+  width: 2.25rem;
+  height: 2.25rem;
+  margin: 0;
+  padding: 0;
+  justify-content: center;
+}
+
+#camera-devices-refresh-button .control-icon::before {
+  content: "\21BA";
+}
+
+#camera-device-status {
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+#camera-device-status:empty {
+  margin: 0;
+}
+
+#camera-preview {
+  width: 100%;
+  max-width: 40rem;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: var(--ol-background);
+  border: 1px solid var(--ol-border);
+  border-radius: 6px;
+  margin-block: 0.5rem;
+}
+
+#camera-preview:not([hidden]) {
+  display: block;
+}
+
+#camera-preview-status {
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+#camera-preview-status:empty {
+  margin: 0;
+}
+
+#camera-robot-demo-status {
+  min-height: 4.5em;
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem;
+  border-inline-start: 3px solid var(--ol-blue);
+  background: var(--ol-background);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+#camera-robot-demo-status[data-status="failed"] {
+  border-color: var(--ol-error);
+  color: var(--ol-error);
+}
+
+#camera-robot-demo-status[data-status="succeeded"] {
+  border-color: var(--ol-green);
+}
+
 .pane-turtle {
   grid-area: turtle;
 }
@@ -491,7 +584,8 @@ main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
   content: "\25B6"; /* ▶ */
 }
 
-#run-toggle-button[data-icon="stop"] .control-icon::before {
+#run-toggle-button[data-icon="stop"] .control-icon::before,
+#camera-preview-button[data-icon="stop"] .control-icon::before {
   content: "\23F9"; /* ⏹ */
 }
 
@@ -499,7 +593,13 @@ main:has(.pane-lesson:not([hidden])):has(.pane-tutor:not([hidden])) {
   content: "\21BA"; /* ↺ */
 }
 
-#run-toggle-button[data-icon="stop"] {
+#camera-robot-demo-button .control-icon::before,
+#camera-preview-button[data-icon="camera"] .control-icon::before {
+  content: "\25C9";
+}
+
+#run-toggle-button[data-icon="stop"],
+#camera-preview-button[data-icon="stop"] {
   background: var(--ol-button-stop);
 }
 

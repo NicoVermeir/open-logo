@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import {
   createStudioState,
@@ -553,12 +554,9 @@ test("every compensation acknowledgement gates the canvas and cancellation preve
   }
 });
 
-test("compensation and zero-distance commands count toward preflight before any hardware command", async () => {
+test("compensation and zero-distance commands count toward preflight before any hardware command", async (context) => {
   for (const source of ["repeat 23 [ right 90 ]", "repeat 501 [ forward 0 ]"]) {
-    let commands = 0;
-    const command = async () => {
-      commands++;
-    };
+    const command = context.mock.fn();
     await assert.rejects(
       executeRobotProgram(
         {
@@ -570,13 +568,13 @@ test("compensation and zero-distance commands count toward preflight before any 
         {
           state: createStudioState({ source }),
           penSettings,
-          repaint() {},
-          cancelled: () => false,
+          repaint: context.mock.fn(),
+          cancelled: context.mock.fn(),
         },
       ),
       /500 motion segments/,
     );
-    assert.equal(commands, 0);
+    assert.equal(command.mock.callCount(), 0);
   }
 });
 
@@ -617,7 +615,7 @@ test("450-degree plans include calibration and translations in the 500-segment b
   }
 });
 
-test("explicit pen commands gate motion and virtual pen changes; cancellation prevents lowering", async () => {
+test("explicit pen commands gate motion and virtual pen changes; cancellation prevents lowering", async (context) => {
   const state = createStudioState({
     source: "pen_up\nforward 10\npen_down\nforward 10",
   });
@@ -630,9 +628,7 @@ test("explicit pen commands gate motion and virtual pen changes; cancellation pr
       calls.push(["pen", down, settings]);
       return new Promise((resolve) => pending.push(resolve));
     },
-    async moveCentimeters(distance) {
-      calls.push(["move", distance]);
-    },
+    moveCentimeters: context.mock.fn(),
   };
   const run = executeRobotProgram(robot, {
     state,
@@ -647,6 +643,7 @@ test("explicit pen commands gate motion and virtual pen changes; cancellation pr
   pending.shift()();
   await assert.rejects(run, /stopped/);
   assert.equal(calls.length, 1);
+  assert.equal(robot.moveCentimeters.mock.callCount(), 0);
   assert.equal(state.getState().turtleState.penDown, true);
 });
 
@@ -689,10 +686,10 @@ test("robot runs only lower the pen for an executed pen_down command", async () 
   }
 });
 
-test("uncalibrated physical runs never send a command", async () => {
+test("uncalibrated physical runs never send a command", async (context) => {
   const state = createStudioState({ source: "forward 10" });
   await assert.rejects(
-    executeRobotProgram({}, { state, repaint() {}, cancelled: () => false }),
+    executeRobotProgram({}, { state, repaint: context.mock.fn(), cancelled: context.mock.fn() }),
     /calibration/,
   );
 });
@@ -868,7 +865,7 @@ test("cancellation after acknowledgement prevents stale canvas updates", async (
   assert.deepEqual(state.getState().turtleState.position, [0, 0]);
 });
 
-test("preflight rejects diagnostics, unsupported effects, and excessive travel before movement", async () => {
+test("preflight rejects diagnostics, unsupported effects, and excessive travel before movement", async (context) => {
   for (const source of [
     "unknown_command",
     "forward 10\nclear_screen",
@@ -878,22 +875,18 @@ test("preflight rejects diagnostics, unsupported effects, and excessive travel b
   ]) {
     const state = createStudioState();
     state.setSource(source);
-    let movements = 0;
+    const command = context.mock.fn();
     await assert.rejects(
       runRobotProgram(
         {
           connected: true,
-          async moveCentimeters() {
-            movements++;
-          },
-          async turnDegrees() {
-            movements++;
-          },
+          moveCentimeters: command,
+          turnDegrees: command,
         },
-        { state, repaint() {}, cancelled: () => false },
+        { state, repaint: context.mock.fn(), cancelled: context.mock.fn() },
       ),
     );
-    assert.equal(movements, 0);
+    assert.equal(command.mock.callCount(), 0);
   }
 });
 
@@ -974,22 +967,20 @@ left -20`);
   assert.ok(spans.slice(lastInstruction).every((span) => span.start[0] === 5));
 });
 
-test("invalid calculated turns retain learner diagnostics and never move", async () => {
+test("invalid calculated turns retain learner diagnostics and never move", async (context) => {
   for (const source of ['right "hello"', "right 360 / 0"]) {
     const state = createStudioState({ source });
-    let movements = 0;
+    const command = context.mock.fn();
     await assert.rejects(
       runRobotProgram(
         {
           connected: true,
-          async turnDegrees() {
-            movements++;
-          },
+          turnDegrees: command,
         },
-        { state, repaint() {}, cancelled: () => false },
+        { state, repaint: context.mock.fn(), cancelled: context.mock.fn() },
       ),
     );
-    assert.equal(movements, 0);
+    assert.equal(command.mock.callCount(), 0);
     assert.ok(state.getState().diagnostics.length > 0);
     assert.ok(
       state
@@ -1033,10 +1024,11 @@ test("shared run controls cancel hardware and keep reset immune to late acknowle
   assert.equal(state.getState().runStatus, "running");
   controller.run();
   controller.step();
-  await controller.runOnRobot();
+  assert.equal(await controller.runOnRobot(), false);
   assert.equal(controller.deliverKey("space"), false);
   assert.equal(controller.deliverClick(), false);
   controller.stop();
+  await nextTurn();
   assert.equal(state.getState().runStatus, "stopped");
   controller.reset();
   acknowledge();
@@ -1046,8 +1038,157 @@ test("shared run controls cancel hardware and keep reset immune to late acknowle
   assert.ok(stops >= 1);
 });
 
+test("shared run controls delegate while no robot program owns execution", async (context) => {
+  const state = createStudioState();
+  const calls = [];
+  const normal = {
+    state,
+    run: () => calls.push(["run"]),
+    step: () => calls.push(["step"]),
+    stop: () => calls.push(["stop"]),
+    reset: () => calls.push(["reset"]),
+    deliverKey: (key) => {
+      calls.push(["key", key]);
+      return true;
+    },
+    deliverClick: () => {
+      calls.push(["click"]);
+      return true;
+    },
+  };
+  const connect = context.mock.fn();
+  const controls = createRobotControlPanelController(connect);
+  const controller = createRobotRunController(normal, controls, context.mock.fn());
+
+  controller.run();
+  controller.step();
+  controller.stop();
+  await controller.resetRobot();
+  assert.equal(controller.deliverKey("space"), true);
+  assert.equal(controller.deliverClick(), true);
+  assert.equal(connect.mock.callCount(), 0);
+
+  assert.deepEqual(calls, [
+    ["run"],
+    ["step"],
+    ["stop"],
+    ["reset"],
+    ["key", "space"],
+    ["click"],
+  ]);
+});
+
+test("robot reset reports acknowledged stop failures", async () => {
+  for (const [failure, message] of [
+    ["stop failed", "Robot stop failed."],
+    [new Error("Stop acknowledgement failed"), "Stop acknowledgement failed"],
+  ]) {
+    for (const method of ["resetRobot", "reset"]) {
+      const state = createStudioState({ source: "forward 10" });
+      let rejectMovement;
+      const controls = createRobotControlPanelController(async () => ({
+        connected: true,
+        async setPenDown() {},
+        async stop() {
+          throw failure;
+        },
+        moveCentimeters: () =>
+          new Promise((_resolve, reject) => {
+            rejectMovement = reject;
+          }),
+      }));
+      await controls.connect();
+      confirmPen(controls);
+      const controller = createRobotRunController(
+        createRunController(state),
+        controls,
+        () => {},
+      );
+
+      const run = controller.runOnRobot();
+      await nextTurn();
+      assert.equal(state.getState().runStatus, "running");
+      if (method === "resetRobot") {
+        await assert.rejects(controller.resetRobot(), (error) => error === failure);
+      } else {
+        assert.equal(controller.reset(), undefined);
+        await nextTurn();
+      }
+      assert.deepEqual(state.getState().notice, { level: "warning", message });
+      assert.deepEqual(state.getState().turtleState.position, [0, 0]);
+      rejectMovement(new Error("cancelled movement"));
+      assert.equal(await run, false);
+      assert.deepEqual(state.getState().notice, { level: "warning", message });
+    }
+  }
+});
+
+test("robot Stop reports asynchronous Error and non-Error failures", async () => {
+  for (const [failure, message] of [
+    ["stop failed", "Robot stop failed."],
+    [new Error("Stop acknowledgement failed"), "Stop acknowledgement failed"],
+  ]) {
+    const state = createStudioState({ source: "forward 10" });
+    let rejectMovement;
+    const controls = createRobotControlPanelController(async () => ({
+      connected: true,
+      async setPenDown() {},
+      async stop() {
+        throw failure;
+      },
+      moveCentimeters: () =>
+        new Promise((_resolve, reject) => {
+          rejectMovement = reject;
+        }),
+    }));
+    await controls.connect();
+    confirmPen(controls);
+    const controller = createRobotRunController(
+      createRunController(state),
+      controls,
+      () => {},
+    );
+
+    const run = controller.runOnRobot();
+    await nextTurn();
+    controller.stop();
+    await nextTurn();
+    assert.deepEqual(state.getState().notice, { level: "warning", message });
+    rejectMovement(new Error("cancelled movement"));
+    assert.equal(await run, false);
+    assert.equal(state.getState().runStatus, "stopped");
+    assert.deepEqual(state.getState().turtleState.position, [0, 0]);
+    assert.equal(state.getState().currentInstructionSourceSpan, null);
+  }
+});
+
+test("unsupported positioning commands are rejected before motion", async (context) => {
+  for (const source of ["set_heading 90", "set_position [10 10]"]) {
+    const state = createStudioState();
+    state.setSource(source);
+    const command = context.mock.fn();
+
+    await assert.rejects(
+      runRobotProgram(
+        {
+          connected: true,
+          moveCentimeters: command,
+          turnDegrees: command,
+        },
+        { state, repaint: context.mock.fn(), cancelled: context.mock.fn() },
+      ),
+    );
+    assert.equal(command.mock.callCount(), 0);
+  }
+});
+
 test("robot completion and failures settle shared run state and always stop motors", async () => {
-  for (const fail of [false, true]) {
+  for (const [failure, message] of [
+    [undefined, null],
+    [new Error("No acknowledgement"), "No acknowledgement"],
+    ["No acknowledgement", "Robot run failed."],
+  ]) {
+    const fail = failure !== undefined;
     const state = createStudioState();
     state.setSource("forward 10\nprint 42");
     let stops = 0;
@@ -1059,7 +1200,7 @@ test("robot completion and failures settle shared run state and always stop moto
         stops++;
       },
       async moveCentimeters() {
-        if (fail) throw new Error("No acknowledgement");
+        if (fail) throw failure;
       },
     }));
     await controls.connect();
@@ -1069,14 +1210,128 @@ test("robot completion and failures settle shared run state and always stop moto
       controls,
       () => {},
     );
-    await controller.runOnRobot();
+    const completed = await controller.runOnRobot();
+    assert.equal(completed, !fail);
     assert.equal(state.getState().runStatus, fail ? "stopped" : "done");
     assert.deepEqual(state.getState().output, fail ? [] : ["42"]);
     assert.equal(stops, 1);
     assert.equal(state.getState().currentInstructionSourceSpan, null);
-    if (fail)
-      assert.match(state.getState().notice.message, /No acknowledgement/);
+    assert.deepEqual(
+      state.getState().notice,
+      fail ? { level: "warning", message } : null,
+    );
   }
+});
+
+test("cancellation during the final repaint settles as stopped without losing output", async (context) => {
+  const state = createStudioState({ source: "print 42" });
+  const stop = context.mock.fn(async () => {});
+  const setPenDown = context.mock.fn(async () => {});
+  const controls = createRobotControlPanelController(async () => ({
+    connected: true,
+    deviceName: "test",
+    stop,
+    setPenDown,
+  }));
+  await controls.connect();
+  confirmPen(controls);
+  let stopAcknowledgement;
+  const controller = createRobotRunController(
+    createRunController(state),
+    controls,
+    () => {
+      if (state.getState().output[0] === "42") {
+        stopAcknowledgement = controls.stop();
+      }
+    },
+  );
+
+  assert.equal(await controller.runOnRobot(), false);
+  assert.ok(stopAcknowledgement instanceof Promise);
+  await stopAcknowledgement;
+  assert.equal(stop.mock.callCount(), 2);
+  assert.deepEqual(setPenDown.mock.calls.map((call) => call.arguments), [
+    [false, penSettings],
+  ]);
+  assert.equal(controls.getView().busy, false);
+  const snapshot = state.getState();
+  assert.equal(snapshot.runStatus, "stopped");
+  assert.equal(snapshot.notice, null);
+  assert.equal(snapshot.currentInstructionSourceSpan, null);
+  assert.deepEqual(snapshot.output, ["42"]);
+  assert.deepEqual(snapshot.lastRunResult, {
+    source: "print 42",
+    output: ["42"],
+    diagnostics: [],
+  });
+});
+
+test("robot Stop publishes stopped only after the robot acknowledges it", async () => {
+  const state = createStudioState();
+  state.setSource("forward 10");
+  let acknowledgeMovement;
+  let acknowledgeEmergencyStop;
+  let stopCount = 0;
+  const controls = createRobotControlPanelController(async () => ({
+    connected: true,
+    deviceName: "test",
+    async setPenDown() {},
+    stop() {
+      stopCount++;
+      if (stopCount > 1) return Promise.resolve();
+      return new Promise((resolve) => {
+        acknowledgeEmergencyStop = resolve;
+      });
+    },
+    moveCentimeters: () =>
+      new Promise((resolve) => {
+        acknowledgeMovement = resolve;
+      }),
+  }));
+  await controls.connect();
+  confirmPen(controls);
+  const controller = createRobotRunController(
+    createRunController(state),
+    controls,
+    () => {},
+  );
+
+  const run = controller.runOnRobot();
+  await nextTurn();
+  controller.stop();
+  assert.equal(state.getState().runStatus, "running");
+
+  acknowledgeEmergencyStop();
+  await nextTurn();
+  assert.equal(state.getState().runStatus, "stopped");
+
+  acknowledgeMovement();
+  assert.equal(await run, false);
+});
+
+test("robot completion requires successful safety cleanup", async () => {
+  const state = createStudioState();
+  state.setSource("forward 10");
+  const controls = createRobotControlPanelController(async () => ({
+    connected: true,
+    deviceName: "test",
+    async setPenDown() {},
+    async stop() {
+      throw new Error("Stop acknowledgement failed");
+    },
+    async moveCentimeters() {},
+  }));
+  await controls.connect();
+  confirmPen(controls);
+  const controller = createRobotRunController(
+    createRunController(state),
+    controls,
+    () => {},
+  );
+
+  assert.equal(await controller.runOnRobot(), false);
+  assert.equal(state.getState().runStatus, "stopped");
+  assert.match(state.getState().notice.message, /Stop acknowledgement failed/);
 });
 
 test("procedures, distance expressions, and virtual pen settings use the same trace", async () => {
@@ -1140,22 +1395,177 @@ test("disconnect prevents pending motion from updating the canvas", async () => 
   assert.deepEqual(state.getState().turtleState.position, [0, 0]);
 });
 
-test("runtime errors and unsupported trace effects are preflighted before movement", async () => {
+test("runtime errors and unsupported trace effects are preflighted before movement", async (context) => {
   for (const source of ["forward 10\nprint 1 / 0", "forward 10\nwait 1"]) {
     const state = createStudioState();
     state.setSource(source);
-    let movements = 0;
+    const command = context.mock.fn();
     await assert.rejects(
       runRobotProgram(
         {
           connected: true,
-          async moveCentimeters() {
-            movements++;
-          },
+          moveCentimeters: command,
         },
-        { state, repaint() {}, cancelled: () => false },
+        { state, repaint: context.mock.fn(), cancelled: context.mock.fn() },
       ),
     );
-    assert.equal(movements, 0);
+    assert.equal(command.mock.callCount(), 0);
   }
+});
+
+test("a run handoff without calibration fails before hardware commands", async (context) => {
+  const state = createStudioState({ source: "forward 10" });
+  const command = context.mock.fn();
+  const controller = createRobotRunController(
+    createRunController(state),
+    {
+      runProgram: (program) => program({ connected: true, moveCentimeters: command }, () => false),
+    },
+    context.mock.fn(),
+  );
+  assert.equal(await controller.runOnRobot(), false);
+  assert.equal(command.mock.callCount(), 0);
+  assert.equal(state.getState().runStatus, "stopped");
+  assert.deepEqual(state.getState().notice, {
+    level: "warning",
+    message: "Confirm pen calibration before running on the robot.",
+  });
+  assert.deepEqual(state.getState().turtleState.position, [0, 0]);
+});
+
+test("pre-run cancellation prevents every hardware command", async (context) => {
+  const state = createStudioState({ source: "pen_down\nforward 10\nright 90" });
+  const command = context.mock.fn();
+  const cancelled = context.mock.fn(() => true);
+  await assert.rejects(
+    executeRobotProgram(
+      {
+        connected: true,
+        setPenDown: command,
+        moveCentimeters: command,
+        turnDegrees: command,
+      },
+      { state, penSettings, repaint: context.mock.fn(), cancelled },
+    ),
+    { message: "Robot run stopped." },
+  );
+  assert.equal(cancelled.mock.callCount(), 1);
+  assert.equal(command.mock.callCount(), 0);
+  assert.deepEqual(state.getState().diagnostics, []);
+  assert.deepEqual(state.getState().turtleState.position, [0, 0]);
+  assert.equal(state.getState().turtleState.heading, 0);
+  assert.equal(state.getState().turtleScene.items.length, 0);
+});
+
+test("exhausted four-character wrapper names fail before hardware or repaint", async (context) => {
+  const names = Array.from(
+    { length: 36 ** 3 },
+    (_unused, index) => `r${index.toString(36).padStart(3, "0")}`,
+  );
+  const state = createStudioState({ source: `# ${names.join(" ")}\nleft 90` });
+  const command = context.mock.fn();
+  const repaint = context.mock.fn();
+  const cancelled = context.mock.fn();
+  const before = state.getState();
+  await assert.rejects(
+    executeRobotProgram(
+      {
+        connected: true,
+        setPenDown: command,
+        moveCentimeters: command,
+        turnDegrees: command,
+      },
+      { state, penSettings, repaint, cancelled },
+    ),
+    { message: "Robot program contains too many turn commands." },
+  );
+  assert.equal(command.mock.callCount(), 0);
+  assert.equal(repaint.mock.callCount(), 0);
+  assert.equal(cancelled.mock.callCount(), 0);
+  assert.deepEqual(state.getState().diagnostics, []);
+  assert.equal(state.getState().turtleWorld, before.turtleWorld);
+  assert.equal(state.getState().turtleScene, before.turtleScene);
+});
+
+test("malformed runtime traces fail preflight without hardware or canvas effects", () => {
+  execFileSync(process.execPath, [
+    "--experimental-test-module-mocks",
+    "--input-type=module",
+    "-e",
+    `
+      import assert from "node:assert/strict";
+      import { mock } from "node:test";
+      const runtime = await import("@openlogo/runtime");
+      let alterEvents;
+      mock.module("@openlogo/runtime", {
+        namedExports: {
+          ...runtime,
+          execute(...arguments_) {
+            const result = runtime.execute(...arguments_);
+            assert.deepEqual(result.diagnostics, []);
+            return { ...result, events: alterEvents(result.events) };
+          },
+        },
+      });
+      const { createStudioState, runRobotProgram } = await import("@openlogo/studio");
+      const span = { file: "studio.logo", start: [1, 1], end: [1, 9] };
+      const cases = [
+        {
+          source: "forward 10",
+          alter: (event) => event.kind === "move" ? { ...event, kind: "unexpected" } : event,
+          message: "Robot runs do not support unexpected or multiple turtles.",
+        },
+        {
+          source: "forward 10",
+          alter: (event) => event.kind === "move" ? { ...event, turtle_id: "other" } : event,
+          message: "Robot runs do not support move or multiple turtles.",
+        },
+        ...[NaN, 10].map((horizontal) => ({
+          source: "forward 10",
+          alter: (event) => event.kind === "move"
+            ? { ...event, payload: { ...event.payload, to: [horizontal, 10] } }
+            : event,
+          message: "Robot runs require movement along the turtle heading.",
+        })),
+        ...[Infinity, "90"].map((angle) => ({
+          source: "right 90",
+          alter: (event) => event.kind === "procedure-enter"
+            ? { ...event, payload: { ...event.payload, args: [angle] } }
+            : event,
+          message: "Robot turns require a finite numeric angle.",
+        })),
+        {
+          source: "right 90",
+          alter: (event) => event.kind === "turn" ? { ...event, source_span: span } : event,
+          message: "Robot turn has no supported source command.",
+          remove: "procedure-enter",
+        },
+      ];
+      for (const scenario of cases) {
+        alterEvents = (events) => events
+          .filter((event) => event.kind !== scenario.remove)
+          .map(scenario.alter);
+        const state = createStudioState({ source: scenario.source });
+        const before = state.getState();
+        const command = mock.fn();
+        const repaint = mock.fn();
+        await assert.rejects(runRobotProgram({
+          connected: true,
+          setPenDown: command,
+          moveCentimeters: command,
+          turnDegrees: command,
+        }, {
+          state,
+          repaint,
+          cancelled: () => false,
+          penSettings: ${JSON.stringify(penSettings)},
+        }), { message: scenario.message });
+        assert.equal(command.mock.callCount(), 0);
+        assert.equal(repaint.mock.callCount(), 0);
+        assert.equal(state.getState().turtleWorld, before.turtleWorld);
+        assert.equal(state.getState().turtleScene, before.turtleScene);
+      }
+      mock.restoreAll();
+    `,
+  ]);
 });

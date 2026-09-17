@@ -197,7 +197,25 @@ export const REPL_FOCUS_ORDER: readonly FocusStop[] = [
     role: "button",
     label: "Start run",
   },
+  {
+    id: "run-on-robot-button",
+    region: "repl",
+    role: "button",
+    label: "Run on turtlebot",
+  },
   { id: "reset-button", region: "repl", role: "button", label: "Reset" },
+  {
+    id: "board-import-button",
+    region: "repl",
+    role: "button",
+    label: "Import OpenLogo board image",
+  },
+  {
+    id: "camera-robot-demo-button",
+    region: "repl",
+    role: "button",
+    label: "Capture board and run on turtlebot",
+  },
   {
     id: "speed-slider",
     region: "repl",

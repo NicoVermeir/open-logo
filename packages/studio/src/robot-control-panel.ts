@@ -5,13 +5,19 @@ import {
 } from "./mbot2-manual-robot.js";
 
 export type RobotControlConnectionStatus =
-  "unsupported" | "disconnected" | "connecting" | "connected" | "error";
+  | "unsupported"
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "disconnecting"
+  | "error";
 export type RobotMovement = "forward" | "backward" | "left" | "right";
 
 export interface RobotControlPanelView {
   readonly status: RobotControlConnectionStatus;
   readonly statusMessage: string;
   readonly deviceName: string;
+  readonly robotOwned: boolean;
   readonly speed: number;
   readonly durationSeconds: number;
   readonly battery: number | undefined;
@@ -26,7 +32,7 @@ export interface RobotControlPanelController {
   getView(): RobotControlPanelView;
   subscribe(listener: (view: RobotControlPanelView) => void): () => void;
   connect(): Promise<void>;
-  disconnect(): void;
+  disconnect(): Promise<void>;
   move(direction: RobotMovement): Promise<void>;
   stop(): Promise<void>;
   refreshStatus(): Promise<void>;
@@ -43,7 +49,7 @@ export interface RobotControlPanelController {
   ): Promise<void>;
   setSpeed(speed: number): void;
   setDuration(durationSeconds: number): void;
-  dispose(): void;
+  dispose(): Promise<void>;
 }
 
 export function createRobotControlPanelController(
@@ -52,6 +58,8 @@ export function createRobotControlPanelController(
 ): RobotControlPanelController {
   let robot: MBot2ManualRobot | undefined;
   let disposed = false;
+  let connectionRevision = 0;
+  let connectionPending = false;
   let activeActionCount = 0;
   let cancelProgram: (() => void) | undefined;
   let view: RobotControlPanelView = {
@@ -61,6 +69,7 @@ export function createRobotControlPanelController(
         ? "Web Bluetooth is unavailable in this browser."
         : "Robot disconnected.",
     deviceName: "",
+    robotOwned: false,
     speed: 50,
     durationSeconds: 0.5,
     battery: undefined,
@@ -84,25 +93,67 @@ export function createRobotControlPanelController(
   const runAction = async (
     action: () => Promise<void>,
     allowWhileBusy = false,
+    propagateFailure = false,
+    reportFailure = true,
   ): Promise<void> => {
     if ((!allowWhileBusy && activeActionCount > 0) || robot === undefined)
       return;
+    const actionRobot = robot;
+    const actionRevision = connectionRevision;
+    const ownsConnection = (): boolean =>
+      !disposed &&
+      robot === actionRobot &&
+      connectionRevision === actionRevision;
     activeActionCount += 1;
     publish({ busy: true });
     try {
       await action();
     } catch (error) {
-      publish({
-        status: "error",
-        penState: "unknown",
-        penConfirmed: false,
-        statusMessage:
-          error instanceof Error ? error.message : "Robot command failed.",
-      });
+      if (ownsConnection() && reportFailure)
+        publish({
+          status: "error",
+          penState: "unknown",
+          penConfirmed: false,
+          statusMessage:
+            error instanceof Error ? error.message : "Robot command failed.",
+        });
+      if (propagateFailure) throw error;
     } finally {
-      activeActionCount -= 1;
-      publish({ busy: activeActionCount > 0 });
+      if (ownsConnection()) {
+        activeActionCount -= 1;
+        publish({ busy: activeActionCount > 0 });
+      }
     }
+  };
+  const cleanUpAndDisconnect = async (
+    activeRobot: MBot2ManualRobot,
+    penSettings: Readonly<RobotPenSettings> | undefined,
+  ): Promise<void> => {
+    if (!activeRobot.connected) {
+      activeRobot.disconnect();
+      return;
+    }
+    const failures: unknown[] = [];
+    try {
+      await activeRobot.stop();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (penSettings !== undefined && activeRobot.connected) {
+      try {
+        await activeRobot.setPenDown(false, penSettings);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    try {
+      activeRobot.disconnect();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, "Robot safety cleanup failed.");
   };
 
   return {
@@ -113,7 +164,15 @@ export function createRobotControlPanelController(
       return () => listeners.delete(listener);
     },
     async connect() {
-      if (connectRobot === undefined || view.busy || disposed) return;
+      if (
+        connectRobot === undefined ||
+        connectionPending ||
+        view.busy ||
+        disposed
+      )
+        return;
+      connectionPending = true;
+      const currentRevision = ++connectionRevision;
       publish({
         status: "connecting",
         penState: "unknown",
@@ -122,33 +181,87 @@ export function createRobotControlPanelController(
         busy: true,
       });
       try {
-        robot = await connectRobot();
+        const connectedRobot = await connectRobot();
+        if (disposed || currentRevision !== connectionRevision) {
+          connectedRobot.disconnect();
+          return;
+        }
+        robot = connectedRobot;
         publish({
           status: "connected",
           statusMessage: `Connected to ${robot.deviceName}.`,
           deviceName: robot.deviceName,
+          robotOwned: true,
         });
       } catch (error) {
+        if (disposed || currentRevision !== connectionRevision) return;
         publish({
           status: "error",
           statusMessage:
             error instanceof Error ? error.message : "Could not connect.",
         });
       } finally {
-        publish({ busy: false });
+        connectionPending = false;
+        if (!disposed && currentRevision === connectionRevision)
+          publish({ busy: false });
       }
     },
-    disconnect() {
+    async disconnect() {
+      const disconnectRevision = ++connectionRevision;
       cancelProgram?.();
-      robot?.disconnect();
-      robot = undefined;
+      const activeRobot = robot;
+      const penSettings = view.penConfirmed ? view.penSettings : undefined;
+      if (activeRobot === undefined) {
+        publish({
+          status: "disconnected",
+          penState: "unknown",
+          penConfirmed: false,
+          statusMessage: "Robot disconnected.",
+          deviceName: "",
+          robotOwned: false,
+          busy: false,
+        });
+        return;
+      }
       publish({
-        status: "disconnected",
+        status: "disconnecting",
         penState: "unknown",
         penConfirmed: false,
-        statusMessage: "Robot disconnected.",
-        deviceName: "",
+        statusMessage: "Stopping robot before disconnecting...",
+        robotOwned: true,
+        busy: true,
       });
+      try {
+        await cleanUpAndDisconnect(activeRobot, penSettings);
+        if (!disposed && connectionRevision === disconnectRevision) {
+          robot = undefined;
+          activeActionCount = 0;
+          publish({
+            status: "disconnected",
+            statusMessage: "Robot disconnected.",
+            deviceName: "",
+            robotOwned: false,
+            busy: false,
+          });
+        }
+      } catch (error) {
+        if (!disposed && connectionRevision === disconnectRevision) {
+          const stillOwned = activeRobot.connected;
+          if (!stillOwned) robot = undefined;
+          activeActionCount = 0;
+          publish({
+            status: "error",
+            statusMessage:
+              error instanceof Error
+                ? error.message
+                : "Robot safety cleanup failed.",
+            deviceName: stillOwned ? activeRobot.deviceName : "",
+            robotOwned: stillOwned,
+            busy: false,
+          });
+        }
+        throw error;
+      }
     },
     move(direction) {
       if (executionLocked()) return Promise.resolve();
@@ -164,21 +277,28 @@ export function createRobotControlPanelController(
     },
     stop() {
       cancelProgram?.();
-      return runAction(() => robot!.stop(), true);
+      return runAction(() => robot!.stop(), true, true);
     },
     refreshStatus() {
       if (executionLocked()) return Promise.resolve();
-      return runAction(async () => {
-        const [battery, distance] = await Promise.all([
-          robot!.battery(),
-          robot!.distance(),
-        ]);
-        publish({
-          battery,
-          distance,
-          statusMessage: "Robot status refreshed.",
-        });
-      });
+      const activeRobot = robot;
+      return runAction(
+        async () => {
+          const [battery, distance] = await Promise.all([
+            activeRobot!.battery(),
+            activeRobot!.distance(),
+          ]);
+          if (disposed || robot !== activeRobot || !activeRobot!.connected)
+            return;
+          publish({
+            battery,
+            distance,
+            statusMessage: "Robot status refreshed.",
+          });
+        },
+        false,
+        true,
+      );
     },
     runProgram(action) {
       if (
@@ -189,41 +309,56 @@ export function createRobotControlPanelController(
       )
         return Promise.resolve();
       const activeRobot = robot;
+      const programRevision = connectionRevision;
       const penSettings = view.penConfirmed
         ? Object.freeze({ ...view.penSettings })
         : undefined;
-      return runAction(async () => {
-        let cancelled = false;
-        cancelProgram = () => {
-          cancelled = true;
-        };
-        try {
-          publish({ penState: "unknown" });
-          await action(activeRobot, () => cancelled, penSettings);
-        } catch (error) {
-          publish({
-            status: activeRobot.connected ? "connected" : "error",
-            statusMessage:
-              error instanceof Error ? error.message : "Robot run failed.",
-          });
-        } finally {
+      return runAction(
+        async () => {
+          let cancelled = false;
+          const cancelThisProgram = () => {
+            cancelled = true;
+          };
+          const ownsProgram = (): boolean =>
+            !disposed &&
+            robot === activeRobot &&
+            connectionRevision === programRevision &&
+            cancelProgram === cancelThisProgram;
+          cancelProgram = cancelThisProgram;
           try {
-            if (activeRobot.connected) {
-              try {
-                await activeRobot.stop();
-              } finally {
-                if (penSettings !== undefined && activeRobot.connected) {
-                  await activeRobot.setPenDown(false, penSettings);
-                  if (robot === activeRobot && activeRobot.connected)
-                    publish({ penState: "up" });
+            publish({ penState: "unknown" });
+            await action(activeRobot, () => cancelled, penSettings);
+          } catch (error) {
+            if (ownsProgram())
+              publish({
+                status: activeRobot.connected ? "connected" : "error",
+                statusMessage:
+                  error instanceof Error ? error.message : "Robot run failed.",
+              });
+            throw error;
+          } finally {
+            try {
+              if (activeRobot.connected) {
+                try {
+                  await activeRobot.stop();
+                } finally {
+                  if (penSettings !== undefined && activeRobot.connected) {
+                    await activeRobot.setPenDown(false, penSettings);
+                    if (ownsProgram() && activeRobot.connected)
+                      publish({ penState: "up" });
+                  }
                 }
               }
+            } finally {
+              if (cancelProgram === cancelThisProgram)
+                cancelProgram = undefined;
             }
-          } finally {
-            cancelProgram = undefined;
           }
-        }
-      });
+        },
+        false,
+        true,
+        false,
+      );
     },
     setPenSettings(settings) {
       if (disposed || view.busy || executionLocked()) return;
@@ -285,12 +420,17 @@ export function createRobotControlPanelController(
     setDuration(durationSeconds) {
       publish({ durationSeconds });
     },
-    dispose() {
+    async dispose() {
       disposed = true;
+      connectionRevision++;
       cancelProgram?.();
-      robot?.disconnect();
+      const activeRobot = robot;
+      const penSettings = view.penConfirmed ? view.penSettings : undefined;
       robot = undefined;
+      activeActionCount = 0;
       listeners.clear();
+      if (activeRobot !== undefined)
+        await cleanUpAndDisconnect(activeRobot, penSettings);
     },
   };
 }

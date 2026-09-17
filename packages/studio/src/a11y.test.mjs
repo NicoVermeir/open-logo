@@ -46,7 +46,7 @@ test("REPL_FOCUS_ORDER covers every studio region with unique, stable ids", () =
   }
 });
 
-test("REPL_FOCUS_ORDER puts the lesson pane first and the tutor-output pane last, with the editor, Start/Stop toggle, Reset, Speed, run log, canvas, turtle state, output, and diagnostics in between (#410)", () => {
+test("REPL_FOCUS_ORDER puts the lesson pane first and the tutor-output pane last, with every editor action, run log, canvas, turtle state, output, and diagnostics in between (#410)", () => {
   const order = OL.REPL_FOCUS_ORDER;
   assert.equal(order[0]?.id, "lesson-pane");
   assert.equal(order[1]?.id, "editor");
@@ -60,11 +60,19 @@ test("REPL_FOCUS_ORDER puts the lesson pane first and the tutor-output pane last
   const replStops = order.filter((stop) => stop.region === "repl");
   assert.deepEqual(
     replStops.map((stop) => stop.label),
-    ["Start run", "Reset", "Turtle speed", "Run log"],
+    [
+      "Start run",
+      "Run on turtlebot",
+      "Reset",
+      "Import OpenLogo board image",
+      "Capture board and run on turtlebot",
+      "Turtle speed",
+      "Run log",
+    ],
   );
   assert.deepEqual(
     replStops.map((stop) => stop.role),
-    ["button", "button", "slider", "log"],
+    ["button", "button", "button", "button", "button", "slider", "log"],
   );
 
   const canvasStop = order.find((stop) => stop.id === "canvas");
